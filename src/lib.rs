@@ -112,21 +112,6 @@ impl Serializer {
             int_compressor,
             string_compressor,
         }
-impl StringCompressorEnum {
-    pub fn compress(&self, data: &[String]) -> CompressedStringColumn {
-        match self {
-            StringCompressorEnum::Lz4(c) => c.compress(data),
-            StringCompressorEnum::None(c) => c.compress(data),
-        }
-    }
-
-    pub fn decompress(&self, data: &CompressedStringColumn) -> Vec<String> {
-        match self {
-            StringCompressorEnum::Lz4(c) => c.decompress(data),
-            StringCompressorEnum::None(c) => c.decompress(data),
-        }
-    }
-}
     }
 
     pub fn serialize(&self, path: &Path, table: &Table) -> Result<()> {
