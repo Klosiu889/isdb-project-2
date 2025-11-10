@@ -22,7 +22,7 @@ fn test_compression_correctness() {
 }
 
 #[test]
-fn test_compression_size_random() {
+fn test_compression_size_csv() {
     let path = Path::new("tests/data/titanic.csv");
     let table = get_table_from_csv(path).expect("Error reading file");
     let serializer_compression = Serializer::new();
