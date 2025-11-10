@@ -7,16 +7,19 @@ use proj2::{
         StringCompressors, VleDeltaIntCompressor,
     },
 };
+use rand::{SeedableRng, rngs::StdRng};
 
-use crate::utils::{
-    generate_random_table, get_file_size, get_table_from_csv, get_unique_test_file,
-};
+use crate::utils::{generate_random_table, get_file_size, get_table_from_csv};
 
 mod utils;
 
+const TESTS_DIRECTORY: &'static str = "tests";
+
 #[test]
 fn test_compression_correctness() {
-    let table = generate_random_table();
+    let seed = 42;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let table = generate_random_table(&mut rng);
     let serializer = Serializer::new();
 
     let path = Path::new("tests/test_data.isdb");
@@ -30,16 +33,18 @@ fn test_compression_correctness() {
 
 #[test]
 fn test_lz4_compression_size_csv() {
-    let path = Path::new("tests/data/titanic.csv");
-    let table = get_table_from_csv(path).expect("Error reading file");
+    let path = Path::new(TESTS_DIRECTORY).join("data/titanic.csv");
+    let table = get_table_from_csv(&path).expect("Error reading file");
     let serializer_compression = Serializer::with_compressors(
         IntCompressors::None(NoIntCompressor),
         StringCompressors::Lz4(LZ4StringCompressor),
     );
     let serializer_no_compression = Serializer::no_compression();
 
-    let path_compression = get_unique_test_file("test_compressed_data");
-    let path_no_compression = get_unique_test_file("test_uncompressed_data");
+    let path_compression =
+        Path::new(TESTS_DIRECTORY).join("test_lz4_compression_size_csv_compressed.isdb");
+    let path_no_compression =
+        Path::new(TESTS_DIRECTORY).join("test_lz4_compression_size_csv_uncompressed.isdb");
 
     serializer_compression
         .serialize(&path_compression, &table)
@@ -59,16 +64,18 @@ fn test_lz4_compression_size_csv() {
 
 #[test]
 fn test_vle_delta_compression_size_csv() {
-    let path = Path::new("tests/data/titanic.csv");
-    let table = get_table_from_csv(path).expect("Error reading file");
+    let path = Path::new(TESTS_DIRECTORY).join("data/titanic.csv");
+    let table = get_table_from_csv(&path).expect("Error reading file");
     let serializer_compression = Serializer::with_compressors(
         IntCompressors::VleDelta(VleDeltaIntCompressor),
         StringCompressors::None(NoStringCompressor),
     );
     let serializer_no_compression = Serializer::no_compression();
 
-    let path_compression = get_unique_test_file("test_compressed_data");
-    let path_no_compression = get_unique_test_file("test_uncompressed_data");
+    let path_compression =
+        Path::new(TESTS_DIRECTORY).join("test_vle_delta_compression_size_csv_compressed.isdb");
+    let path_no_compression =
+        Path::new(TESTS_DIRECTORY).join("test_vle_delta_compression_size_csv_uncompressed.isdb");
 
     serializer_compression
         .serialize(&path_compression, &table)
@@ -88,13 +95,15 @@ fn test_vle_delta_compression_size_csv() {
 
 #[test]
 fn test_lz4_and_vle_delta_compression_size_csv() {
-    let path = Path::new("tests/data/titanic.csv");
-    let table = get_table_from_csv(path).expect("Error reading file");
+    let path = Path::new(TESTS_DIRECTORY).join("data/titanic.csv");
+    let table = get_table_from_csv(&path).expect("Error reading file");
     let serializer_compression = Serializer::new();
     let serializer_no_compression = Serializer::no_compression();
 
-    let path_compression = get_unique_test_file("test_compressed_data");
-    let path_no_compression = get_unique_test_file("test_uncompressed_data");
+    let path_compression = Path::new(TESTS_DIRECTORY)
+        .join("test_lz4_and_vle_delta_compression_size_csv_compressed.isdb");
+    let path_no_compression = Path::new(TESTS_DIRECTORY)
+        .join("test_lz4_and_vle_delta_compression_size_csv_uncompressed.isdb");
 
     serializer_compression
         .serialize(&path_compression, &table)
