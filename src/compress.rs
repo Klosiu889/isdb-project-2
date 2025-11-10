@@ -59,10 +59,9 @@ pub struct CompressedStringColumn {
 #[derive(Debug)]
 pub enum CompressorError {
     Lz4Decompression(DecompressError),
-    StringDecoding(&'static str),
-    VLEDecoding(&'static str),
-    Utf8Decode(FromUtf8Error),
-    NoCompressionDecoding(&'static str),
+    Utf8Decoding(FromUtf8Error),
+    VleDecoding(&'static str),
+    WrongDataLength(&'static str),
     NegativeStringLength(&'static str),
 }
 
@@ -74,7 +73,7 @@ impl From<DecompressError> for CompressorError {
 
 impl From<FromUtf8Error> for CompressorError {
     fn from(value: FromUtf8Error) -> Self {
-        Self::Utf8Decode(value)
+        Self::Utf8Decoding(value)
     }
 }
 
@@ -107,7 +106,7 @@ impl Compressor<i64> for VleDeltaIntCompressor {
         let mut cursor = &compressed[..];
         let mut deltas = Vec::<i64>::new();
         while !cursor.is_empty() {
-            let (d, n) = i64::decode_var(&cursor).ok_or(CompressorError::VLEDecoding(
+            let (d, n) = i64::decode_var(&cursor).ok_or(CompressorError::VleDecoding(
                 "Decoder stopped before going through all data",
             ))?;
             deltas.push(d);
@@ -162,7 +161,7 @@ impl Compressor<String> for LZ4StringCompressor {
 
             let slice =
                 raw.get(offset..offset + len as usize)
-                    .ok_or(CompressorError::StringDecoding(
+                    .ok_or(CompressorError::WrongDataLength(
                         "Data length is shorter then declared strings lengths",
                     ))?;
             res.push(String::from_utf8(slice.to_vec())?);
@@ -185,7 +184,7 @@ impl Compressor<i64> for NoIntCompressor {
 
     fn decompress(&self, compressed: &Self::Compressed) -> Result<Vec<i64>, CompressorError> {
         if compressed.len() % 8 != 0 {
-            return Err(CompressorError::NoCompressionDecoding(
+            return Err(CompressorError::WrongDataLength(
                 "Data length must be divisable by 8",
             ));
         }
@@ -231,7 +230,7 @@ impl Compressor<String> for NoStringCompressor {
             }
 
             let slice = compressed.data.get(offset..offset + len as usize).ok_or(
-                CompressorError::StringDecoding(
+                CompressorError::WrongDataLength(
                     "Data length is shorter then declared strings lengths",
                 ),
             )?;
