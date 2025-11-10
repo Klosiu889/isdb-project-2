@@ -87,7 +87,7 @@ impl Table {
 pub enum SerializerError {
     Compressor(CompressorError),
     IO(Error),
-    InvalidFileFormat(&'static str),
+    InvalidFileFormat(String),
 }
 
 impl From<CompressorError> for SerializerError {
@@ -251,7 +251,7 @@ impl Serializer {
         f.read_exact(&mut magic)?;
         if &magic != MAGIC {
             return Err(SerializerError::InvalidFileFormat(
-                "Incorrect file indicator",
+                "Incorrect file indicator".to_string(),
             ));
         }
 
@@ -276,7 +276,7 @@ impl Serializer {
             length2: u64,
         }
         let mut descriptions = Vec::<ColumnDescription>::with_capacity(num_cols);
-        for _ in 0..num_cols {
+        for col_idx in 0..num_cols {
             let mut nl = [0u8; 1];
             f.read_exact(&mut nl)?;
             let name_length = nl[0];
@@ -291,7 +291,10 @@ impl Serializer {
                 0u8 => ColumnType::INT64,
                 1u8 => ColumnType::STR,
                 _ => {
-                    return Err(SerializerError::InvalidFileFormat("Invalid column type"));
+                    return Err(SerializerError::InvalidFileFormat(format!(
+                        "Invalid column type at column: {}",
+                        col_idx
+                    )));
                 }
             };
 
@@ -364,6 +367,14 @@ impl Serializer {
                     })
                 }
             }
+        }
+
+        let mut footer = [0u8; 4];
+        f.read_exact(&mut footer)?;
+        if &footer != FOOTER {
+            return Err(SerializerError::InvalidFileFormat(
+                "Invalid file footer".to_string(),
+            ));
         }
 
         Ok(Table { num_rows, columns })

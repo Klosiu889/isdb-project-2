@@ -14,6 +14,8 @@ const CHARS_RANGE: std::ops::RangeInclusive<char> = 'a'..='z';
 const TABLE_ROWS_RANGE: std::ops::Range<usize> = 5..10;
 const TABLE_COLS_RANGE: std::ops::Range<usize> = 5..10;
 
+pub const TESTS_DIRECTORY: &'static str = "tests";
+
 pub fn generate_random_int_vec(rng: &mut StdRng, size: usize) -> Vec<i64> {
     (0..size)
         .map(|_| rng.random_range(INT64_SIZE_RANGE))

@@ -1,0 +1,89 @@
+use std::{
+    fs::{File, remove_file},
+    io::Write,
+    path::Path,
+};
+
+use proj2::{Serializer, SerializerError};
+
+use crate::utils::TESTS_DIRECTORY;
+
+mod utils;
+
+#[test]
+fn test_invalid_magic() {
+    let path = Path::new(TESTS_DIRECTORY).join("test_invalid_magic.isdb");
+    let mut f = File::create(&path).unwrap();
+
+    let magic = b"TEST";
+    f.write_all(magic).unwrap();
+
+    let serializer = Serializer::new();
+
+    let result = serializer.deserialize(&path);
+
+    let _ = remove_file(&path);
+
+    assert!(matches!(result, Err(SerializerError::InvalidFileFormat(_))));
+    if let Err(SerializerError::InvalidFileFormat(msg)) = result {
+        assert_eq!(msg, "Invalid file indicator");
+    }
+}
+
+#[test]
+fn test_invalid_column_type() {
+    let path = Path::new(TESTS_DIRECTORY).join("test_invalid_column_type.isdb");
+    let mut f = File::create(&path).unwrap();
+
+    let magic = b"ISBD";
+    f.write_all(magic).unwrap();
+    let version = 1u8;
+    f.write_all(&version.to_le_bytes()).unwrap();
+    let num_cols = 1u16;
+    f.write_all(&num_cols.to_le_bytes()).unwrap();
+    let num_rows = 1u64;
+    f.write_all(&num_rows.to_le_bytes()).unwrap();
+    let col_name = b"test";
+    f.write_all(&(col_name.len() as u8).to_le_bytes()).unwrap();
+    f.write_all(col_name).unwrap();
+    let col_type = 2u8;
+    f.write_all(&col_type.to_le_bytes()).unwrap();
+
+    let serializer = Serializer::new();
+
+    let result = serializer.deserialize(&path);
+
+    let _ = remove_file(&path);
+
+    assert!(matches!(result, Err(SerializerError::InvalidFileFormat(_))));
+    if let Err(SerializerError::InvalidFileFormat(msg)) = result {
+        assert_eq!(msg, "Invalid column type as column: 0");
+    }
+}
+#[test]
+fn test_invalid_footer() {
+    let path = Path::new(TESTS_DIRECTORY).join("test_invalid_footer.isdb");
+    let mut f = File::create(&path).unwrap();
+
+    let magic = b"ISBD";
+    f.write_all(magic).unwrap();
+    let version = 1u8;
+    f.write_all(&version.to_le_bytes()).unwrap();
+    let num_cols = 0u16;
+    f.write_all(&num_cols.to_le_bytes()).unwrap();
+    let num_rows = 0u64;
+    f.write_all(&num_rows.to_le_bytes()).unwrap();
+    let footer = b"TEST";
+    f.write_all(footer).unwrap();
+
+    let serializer = Serializer::new();
+
+    let result = serializer.deserialize(&path);
+
+    let _ = remove_file(&path);
+
+    assert!(matches!(result, Err(SerializerError::InvalidFileFormat(_))));
+    if let Err(SerializerError::InvalidFileFormat(msg)) = result {
+        assert_eq!(msg, "Invalid file footer");
+    }
+}

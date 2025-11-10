@@ -9,11 +9,9 @@ use proj2::{
 };
 use rand::{SeedableRng, rngs::StdRng};
 
-use crate::utils::{generate_random_table, get_file_size, get_table_from_csv};
+use crate::utils::{TESTS_DIRECTORY, generate_random_table, get_file_size, get_table_from_csv};
 
 mod utils;
-
-const TESTS_DIRECTORY: &'static str = "tests";
 
 #[test]
 fn test_compression_correctness() {

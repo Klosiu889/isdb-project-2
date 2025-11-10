@@ -60,9 +60,9 @@ pub struct CompressedStringColumn {
 pub enum CompressorError {
     Lz4Decompression(DecompressError),
     Utf8Decoding(FromUtf8Error),
-    VleDecoding(&'static str),
-    WrongDataLength(&'static str),
-    NegativeStringLength(&'static str),
+    VleDecoding(String),
+    WrongDataLength(String),
+    NegativeStringLength(String),
 }
 
 impl From<DecompressError> for CompressorError {
@@ -107,7 +107,7 @@ impl Compressor<i64> for VleDeltaIntCompressor {
         let mut deltas = Vec::<i64>::new();
         while !cursor.is_empty() {
             let (d, n) = i64::decode_var(&cursor).ok_or(CompressorError::VleDecoding(
-                "Decoder stopped before going through all data",
+                "Decoder stopped before going through all data".to_string(),
             ))?;
             deltas.push(d);
             cursor = &cursor[n..];
@@ -155,14 +155,14 @@ impl Compressor<String> for LZ4StringCompressor {
         for &len in &compressed.lengths {
             if len < 0 {
                 return Err(CompressorError::NegativeStringLength(
-                    "Negative string length was passed",
+                    "Negative string length was passed".to_string(),
                 ));
             }
 
             let slice =
                 raw.get(offset..offset + len as usize)
                     .ok_or(CompressorError::WrongDataLength(
-                        "Data length is shorter then declared strings lengths",
+                        "Data length is shorter then declared strings lengths".to_string(),
                     ))?;
             res.push(String::from_utf8(slice.to_vec())?);
             offset += len as usize;
@@ -185,7 +185,7 @@ impl Compressor<i64> for NoIntCompressor {
     fn decompress(&self, compressed: &Self::Compressed) -> Result<Vec<i64>, CompressorError> {
         if compressed.len() % 8 != 0 {
             return Err(CompressorError::WrongDataLength(
-                "Data length must be divisable by 8",
+                "Data length must be divisable by 8".to_string(),
             ));
         }
 
@@ -225,13 +225,13 @@ impl Compressor<String> for NoStringCompressor {
         for &len in &compressed.lengths {
             if len < 0 {
                 return Err(CompressorError::NegativeStringLength(
-                    "Negative string length was passed",
+                    "Negative string length was passed".to_string(),
                 ));
             }
 
             let slice = compressed.data.get(offset..offset + len as usize).ok_or(
                 CompressorError::WrongDataLength(
-                    "Data length is shorter then declared strings lengths",
+                    "Data length is shorter then declared strings lengths".to_string(),
                 ),
             )?;
             res.push(String::from_utf8(slice.to_vec())?);
