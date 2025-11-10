@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::compress::{
-    CompressedStringColumn, IntCompressor, IntCompressors, LZ4StringCompressor, NoIntCompressor,
-    NoStringCompressor, StringCompressors,
+    CompressedStringColumn, IntCompressors, LZ4StringCompressor, NoIntCompressor,
+    NoStringCompressor, StringCompressors, VleDeltaIntCompressor,
 };
 
 pub mod compress;
@@ -92,8 +92,8 @@ pub struct Serializer {
 impl Serializer {
     pub fn new() -> Self {
         Self {
-            int_compressor: IntCompressors::VLE(IntCompressor),
-            string_compressor: StringCompressors::LZ4(LZ4StringCompressor),
+            int_compressor: IntCompressors::VleDelta(VleDeltaIntCompressor),
+            string_compressor: StringCompressors::Lz4(LZ4StringCompressor),
         }
     }
 
@@ -144,6 +144,7 @@ impl Serializer {
             }
         }
 
+        #[derive(Debug)]
         enum Location {
             INT {
                 offset: u64,

@@ -1,22 +1,23 @@
+use integer_encoding::VarInt;
 use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
 
 #[derive(Debug)]
 pub enum StringCompressors {
-    LZ4(LZ4StringCompressor),
+    Lz4(LZ4StringCompressor),
     None(NoStringCompressor),
 }
 
 impl StringCompressors {
     pub fn compress(&self, data: &[String]) -> CompressedStringColumn {
         match self {
-            StringCompressors::LZ4(c) => c.compress(data),
+            StringCompressors::Lz4(c) => c.compress(data),
             StringCompressors::None(c) => c.compress(data),
         }
     }
 
     pub fn decompress(&self, data: &CompressedStringColumn) -> Vec<String> {
         match self {
-            StringCompressors::LZ4(c) => c.decompress(data),
+            StringCompressors::Lz4(c) => c.decompress(data),
             StringCompressors::None(c) => c.decompress(data),
         }
     }
@@ -24,21 +25,21 @@ impl StringCompressors {
 
 #[derive(Debug)]
 pub enum IntCompressors {
-    VLE(IntCompressor),
+    VleDelta(VleDeltaIntCompressor),
     None(NoIntCompressor),
 }
 
 impl IntCompressors {
     pub fn compress(&self, data: &[i64]) -> Vec<u8> {
         match self {
-            IntCompressors::VLE(c) => c.compress(data),
+            IntCompressors::VleDelta(c) => c.compress(data),
             IntCompressors::None(c) => c.compress(data),
         }
     }
 
     pub fn decompress(&self, data: &Vec<u8>) -> Vec<i64> {
         match self {
-            IntCompressors::VLE(c) => c.decompress(data),
+            IntCompressors::VleDelta(c) => c.decompress(data),
             IntCompressors::None(c) => c.decompress(data),
         }
     }
@@ -58,25 +59,41 @@ pub trait Compressor<T> {
 }
 
 #[derive(Debug)]
-pub struct IntCompressor;
+pub struct VleDeltaIntCompressor;
 
-impl Compressor<i64> for IntCompressor {
+impl Compressor<i64> for VleDeltaIntCompressor {
     type Compressed = Vec<u8>;
 
     fn compress(&self, data: &[i64]) -> Self::Compressed {
-        data.iter().flat_map(|d| d.to_le_bytes()).collect()
+        let mut deltas = Vec::<i64>::with_capacity(data.len());
+        let mut last = 0i64;
+
+        for &d in data {
+            deltas.push(d - last);
+            last = d;
+        }
+
+        deltas.iter().flat_map(|d| d.encode_var_vec()).collect()
     }
 
     fn decompress(&self, compressed: &Self::Compressed) -> Vec<i64> {
-        assert!(
-            compressed.len() % 8 == 0,
-            "Data length must be divisable by 8"
-        );
+        let mut cursor = &compressed[..];
+        let mut deltas = Vec::<i64>::new();
+        while !cursor.is_empty() {
+            let (d, n) = i64::decode_var(&cursor).unwrap();
+            deltas.push(d);
+            cursor = &cursor[n..];
+        }
 
-        compressed
-            .chunks_exact(8)
-            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-            .collect()
+        let mut data = Vec::<i64>::with_capacity(deltas.len());
+        let mut last = 0i64;
+
+        for delta in deltas {
+            data.push(delta + last);
+            last += delta;
+        }
+
+        data
     }
 }
 
