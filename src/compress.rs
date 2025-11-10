@@ -1,5 +1,7 @@
+use std::string::FromUtf8Error;
+
 use integer_encoding::VarInt;
-use lz4_flex::block::{compress_prepend_size, decompress_size_prepended};
+use lz4_flex::block::{DecompressError, compress_prepend_size, decompress_size_prepended};
 
 #[derive(Debug)]
 pub enum StringCompressors {
@@ -8,14 +10,17 @@ pub enum StringCompressors {
 }
 
 impl StringCompressors {
-    pub fn compress(&self, data: &[String]) -> CompressedStringColumn {
+    pub fn compress(&self, data: &[String]) -> Result<CompressedStringColumn, CompressorError> {
         match self {
             StringCompressors::Lz4(c) => c.compress(data),
             StringCompressors::None(c) => c.compress(data),
         }
     }
 
-    pub fn decompress(&self, data: &CompressedStringColumn) -> Vec<String> {
+    pub fn decompress(
+        &self,
+        data: &CompressedStringColumn,
+    ) -> Result<Vec<String>, CompressorError> {
         match self {
             StringCompressors::Lz4(c) => c.decompress(data),
             StringCompressors::None(c) => c.decompress(data),
@@ -30,14 +35,14 @@ pub enum IntCompressors {
 }
 
 impl IntCompressors {
-    pub fn compress(&self, data: &[i64]) -> Vec<u8> {
+    pub fn compress(&self, data: &[i64]) -> Result<Vec<u8>, CompressorError> {
         match self {
             IntCompressors::VleDelta(c) => c.compress(data),
             IntCompressors::None(c) => c.compress(data),
         }
     }
 
-    pub fn decompress(&self, data: &Vec<u8>) -> Vec<i64> {
+    pub fn decompress(&self, data: &Vec<u8>) -> Result<Vec<i64>, CompressorError> {
         match self {
             IntCompressors::VleDelta(c) => c.decompress(data),
             IntCompressors::None(c) => c.decompress(data),
@@ -51,11 +56,33 @@ pub struct CompressedStringColumn {
     pub lengths: Vec<i64>,
 }
 
+#[derive(Debug)]
+pub enum CompressorError {
+    Lz4Decompression(DecompressError),
+    StringDecoding(&'static str),
+    VLEDecoding(&'static str),
+    Utf8Decode(FromUtf8Error),
+    NoCompressionDecoding(&'static str),
+    NegativeStringLength(&'static str),
+}
+
+impl From<DecompressError> for CompressorError {
+    fn from(value: DecompressError) -> Self {
+        Self::Lz4Decompression(value)
+    }
+}
+
+impl From<FromUtf8Error> for CompressorError {
+    fn from(value: FromUtf8Error) -> Self {
+        Self::Utf8Decode(value)
+    }
+}
+
 pub trait Compressor<T> {
     type Compressed;
 
-    fn compress(&self, data: &[T]) -> Self::Compressed;
-    fn decompress(&self, compressed: &Self::Compressed) -> Vec<T>;
+    fn compress(&self, data: &[T]) -> Result<Self::Compressed, CompressorError>;
+    fn decompress(&self, compressed: &Self::Compressed) -> Result<Vec<T>, CompressorError>;
 }
 
 #[derive(Debug)]
@@ -64,7 +91,7 @@ pub struct VleDeltaIntCompressor;
 impl Compressor<i64> for VleDeltaIntCompressor {
     type Compressed = Vec<u8>;
 
-    fn compress(&self, data: &[i64]) -> Self::Compressed {
+    fn compress(&self, data: &[i64]) -> Result<Self::Compressed, CompressorError> {
         let mut deltas = Vec::<i64>::with_capacity(data.len());
         let mut last = 0i64;
 
@@ -73,14 +100,16 @@ impl Compressor<i64> for VleDeltaIntCompressor {
             last = d;
         }
 
-        deltas.iter().flat_map(|d| d.encode_var_vec()).collect()
+        Ok(deltas.iter().flat_map(|d| d.encode_var_vec()).collect())
     }
 
-    fn decompress(&self, compressed: &Self::Compressed) -> Vec<i64> {
+    fn decompress(&self, compressed: &Self::Compressed) -> Result<Vec<i64>, CompressorError> {
         let mut cursor = &compressed[..];
         let mut deltas = Vec::<i64>::new();
         while !cursor.is_empty() {
-            let (d, n) = i64::decode_var(&cursor).unwrap();
+            let (d, n) = i64::decode_var(&cursor).ok_or(CompressorError::VLEDecoding(
+                "Decoder stopped before going through all data",
+            ))?;
             deltas.push(d);
             cursor = &cursor[n..];
         }
@@ -93,7 +122,7 @@ impl Compressor<i64> for VleDeltaIntCompressor {
             last += delta;
         }
 
-        data
+        Ok(data)
     }
 }
 
@@ -103,7 +132,7 @@ pub struct LZ4StringCompressor;
 impl Compressor<String> for LZ4StringCompressor {
     type Compressed = CompressedStringColumn;
 
-    fn compress(&self, data: &[String]) -> Self::Compressed {
+    fn compress(&self, data: &[String]) -> Result<Self::Compressed, CompressorError> {
         let raw = data
             .iter()
             .flat_map(|d| d.as_bytes())
@@ -113,25 +142,34 @@ impl Compressor<String> for LZ4StringCompressor {
 
         let compressed_data = compress_prepend_size(&raw);
 
-        Self::Compressed {
+        Ok(Self::Compressed {
             data: compressed_data,
             lengths,
-        }
+        })
     }
 
-    fn decompress(&self, compressed: &Self::Compressed) -> Vec<String> {
-        let raw = decompress_size_prepended(&compressed.data).expect("LZ4 decompression failed");
+    fn decompress(&self, compressed: &Self::Compressed) -> Result<Vec<String>, CompressorError> {
+        let raw = decompress_size_prepended(&compressed.data)?;
         let mut res = Vec::with_capacity(compressed.lengths.len());
         let mut offset = 0;
 
         for &len in &compressed.lengths {
-            let end = offset + len as usize;
-            let slice = &raw[offset..end];
-            res.push(String::from_utf8(slice.to_vec()).expect("Invalid utf-8"));
-            offset = end;
+            if len < 0 {
+                return Err(CompressorError::NegativeStringLength(
+                    "Negative string length was passed",
+                ));
+            }
+
+            let slice =
+                raw.get(offset..offset + len as usize)
+                    .ok_or(CompressorError::StringDecoding(
+                        "Data length is shorter then declared strings lengths",
+                    ))?;
+            res.push(String::from_utf8(slice.to_vec())?);
+            offset += len as usize;
         }
 
-        res
+        Ok(res)
     }
 }
 
@@ -141,20 +179,26 @@ pub struct NoIntCompressor;
 impl Compressor<i64> for NoIntCompressor {
     type Compressed = Vec<u8>;
 
-    fn compress(&self, data: &[i64]) -> Self::Compressed {
-        data.iter().flat_map(|d| d.to_le_bytes()).collect()
+    fn compress(&self, data: &[i64]) -> Result<Self::Compressed, CompressorError> {
+        Ok(data.iter().flat_map(|d| d.to_le_bytes()).collect())
     }
 
-    fn decompress(&self, compressed: &Self::Compressed) -> Vec<i64> {
-        assert!(
-            compressed.len() % 8 == 0,
-            "Data length must be divisable by 8"
-        );
+    fn decompress(&self, compressed: &Self::Compressed) -> Result<Vec<i64>, CompressorError> {
+        if compressed.len() % 8 != 0 {
+            return Err(CompressorError::NoCompressionDecoding(
+                "Data length must be divisable by 8",
+            ));
+        }
 
-        compressed
+        Ok(compressed
             .chunks_exact(8)
-            .map(|c| i64::from_le_bytes(c.try_into().unwrap()))
-            .collect()
+            .map(|c| {
+                i64::from_le_bytes(
+                    c.try_into()
+                        .expect("8 bytes chunks guaranteed byt chunks_exact"),
+                )
+            })
+            .collect())
     }
 }
 
@@ -164,7 +208,7 @@ pub struct NoStringCompressor;
 impl Compressor<String> for NoStringCompressor {
     type Compressed = CompressedStringColumn;
 
-    fn compress(&self, data: &[String]) -> Self::Compressed {
+    fn compress(&self, data: &[String]) -> Result<Self::Compressed, CompressorError> {
         let raw = data
             .iter()
             .flat_map(|d| d.as_bytes())
@@ -172,20 +216,29 @@ impl Compressor<String> for NoStringCompressor {
             .collect::<Vec<u8>>();
         let lengths = data.iter().map(|d| d.len() as i64).collect::<Vec<i64>>();
 
-        Self::Compressed { data: raw, lengths }
+        Ok(Self::Compressed { data: raw, lengths })
     }
 
-    fn decompress(&self, compressed: &Self::Compressed) -> Vec<String> {
+    fn decompress(&self, compressed: &Self::Compressed) -> Result<Vec<String>, CompressorError> {
         let mut res = Vec::with_capacity(compressed.lengths.len());
         let mut offset = 0;
 
         for &len in &compressed.lengths {
-            let end = offset + len as usize;
-            let slice = &compressed.data[offset..end];
-            res.push(String::from_utf8(slice.to_vec()).expect("Invalid utf-8"));
-            offset = end;
+            if len < 0 {
+                return Err(CompressorError::NegativeStringLength(
+                    "Negative string length was passed",
+                ));
+            }
+
+            let slice = compressed.data.get(offset..offset + len as usize).ok_or(
+                CompressorError::StringDecoding(
+                    "Data length is shorter then declared strings lengths",
+                ),
+            )?;
+            res.push(String::from_utf8(slice.to_vec())?);
+            offset += len as usize;
         }
 
-        res
+        Ok(res)
     }
 }

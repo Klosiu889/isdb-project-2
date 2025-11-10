@@ -1,12 +1,12 @@
 use std::{
     fmt::Debug,
     fs::File,
-    io::{Error, ErrorKind, Read, Result, Seek, SeekFrom, Write},
+    io::{Error, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
 use crate::compress::{
-    CompressedStringColumn, IntCompressors, LZ4StringCompressor, NoIntCompressor,
+    CompressedStringColumn, CompressorError, IntCompressors, LZ4StringCompressor, NoIntCompressor,
     NoStringCompressor, StringCompressors, VleDeltaIntCompressor,
 };
 
@@ -84,6 +84,25 @@ impl Table {
 }
 
 #[derive(Debug)]
+pub enum SerializerError {
+    Compressor(CompressorError),
+    IO(Error),
+    InvalidFileFormat(&'static str),
+}
+
+impl From<CompressorError> for SerializerError {
+    fn from(value: CompressorError) -> Self {
+        Self::Compressor(value)
+    }
+}
+
+impl From<Error> for SerializerError {
+    fn from(value: Error) -> Self {
+        Self::IO(value)
+    }
+}
+
+#[derive(Debug)]
 pub struct Serializer {
     int_compressor: IntCompressors,
     string_compressor: StringCompressors,
@@ -114,7 +133,7 @@ impl Serializer {
         }
     }
 
-    pub fn serialize(&self, path: &Path, table: &Table) -> Result<()> {
+    pub fn serialize(&self, path: &Path, table: &Table) -> Result<(), SerializerError> {
         let mut f = File::create(path)?;
 
         f.write_all(MAGIC)?;
@@ -167,7 +186,7 @@ impl Serializer {
                             .as_ref()
                             .map(|d| d.as_slice())
                             .unwrap_or(&[]),
-                    );
+                    )?;
                     let offset = f.stream_position()?;
                     let length = compressed_data.len() as u64;
                     offsets_and_lengths.push(Location::INT { offset, length });
@@ -180,7 +199,7 @@ impl Serializer {
                             .as_ref()
                             .map(|d| d.as_slice())
                             .unwrap_or(&[]),
-                    );
+                    )?;
                     let compressed_str_data = compressed_data.data;
                     let lengths = compressed_data.lengths;
 
@@ -188,7 +207,7 @@ impl Serializer {
                     let length = compressed_str_data.len() as u64;
                     f.write_all(&compressed_str_data)?;
 
-                    let compressed_int_data = self.int_compressor.compress(lengths.as_slice());
+                    let compressed_int_data = self.int_compressor.compress(lengths.as_slice())?;
                     let length2 = compressed_int_data.len() as u64;
                     f.write_all(&compressed_int_data)?;
 
@@ -225,14 +244,13 @@ impl Serializer {
         Ok(())
     }
 
-    pub fn deserialize(&self, path: &Path) -> Result<Table> {
+    pub fn deserialize(&self, path: &Path) -> Result<Table, SerializerError> {
         let mut f = File::open(path)?;
 
         let mut magic = [0u8; 4];
         f.read_exact(&mut magic)?;
         if &magic != MAGIC {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
+            return Err(SerializerError::InvalidFileFormat(
                 "Incorrect file indicator",
             ));
         }
@@ -273,10 +291,7 @@ impl Serializer {
                 0u8 => ColumnType::INT64,
                 1u8 => ColumnType::STR,
                 _ => {
-                    return Err(Error::new(
-                        ErrorKind::InvalidData,
-                        "Incorrect file indicator",
-                    ));
+                    return Err(SerializerError::InvalidFileFormat("Invalid column type"));
                 }
             };
 
@@ -321,7 +336,7 @@ impl Serializer {
 
             match desc.col_type {
                 ColumnType::INT64 => {
-                    let mut int_data = self.int_compressor.decompress(&buf);
+                    let mut int_data = self.int_compressor.decompress(&buf)?;
                     int_data.resize(num_rows as usize, 0i64);
                     columns.push(Column {
                         name: desc.name,
@@ -334,11 +349,12 @@ impl Serializer {
                     let mut buf2 = vec![0u8; desc.length2 as usize];
                     f.read_exact(&mut buf2)?;
 
-                    let lengths_data = self.int_compressor.decompress(&buf2);
-                    let mut str_data = self.string_compressor.decompress(&CompressedStringColumn {
-                        data: buf,
-                        lengths: lengths_data,
-                    });
+                    let lengths_data = self.int_compressor.decompress(&buf2)?;
+                    let mut str_data =
+                        self.string_compressor.decompress(&CompressedStringColumn {
+                            data: buf,
+                            lengths: lengths_data,
+                        })?;
                     str_data.resize(num_rows as usize, "".to_string());
                     columns.push(Column {
                         name: desc.name,

@@ -8,7 +8,9 @@ use proj2::{
     },
 };
 
-use crate::utils::{generate_random_table, get_file_size, get_table_from_csv};
+use crate::utils::{
+    generate_random_table, get_file_size, get_table_from_csv, get_unique_test_file,
+};
 
 mod utils;
 
@@ -36,18 +38,18 @@ fn test_lz4_compression_size_csv() {
     );
     let serializer_no_compression = Serializer::no_compression();
 
-    let path_compression = Path::new("tests/test_compressed_data.isdb");
-    let path_no_compression = Path::new("tests/test_uncompressed_data.isdb");
+    let path_compression = get_unique_test_file("test_compressed_data");
+    let path_no_compression = get_unique_test_file("test_uncompressed_data");
 
     serializer_compression
-        .serialize(path_compression, &table)
+        .serialize(&path_compression, &table)
         .unwrap();
     serializer_no_compression
-        .serialize(path_no_compression, &table)
+        .serialize(&path_no_compression, &table)
         .unwrap();
 
-    let size_compressed = get_file_size(path_compression);
-    let size_no_compressed = get_file_size(path_no_compression);
+    let size_compressed = get_file_size(&path_compression);
+    let size_no_compressed = get_file_size(&path_no_compression);
 
     let _ = remove_file(path_compression);
     let _ = remove_file(path_no_compression);
@@ -65,18 +67,18 @@ fn test_vle_delta_compression_size_csv() {
     );
     let serializer_no_compression = Serializer::no_compression();
 
-    let path_compression = Path::new("tests/test_compressed_data.isdb");
-    let path_no_compression = Path::new("tests/test_uncompressed_data.isdb");
+    let path_compression = get_unique_test_file("test_compressed_data");
+    let path_no_compression = get_unique_test_file("test_uncompressed_data");
 
     serializer_compression
-        .serialize(path_compression, &table)
+        .serialize(&path_compression, &table)
         .unwrap();
     serializer_no_compression
-        .serialize(path_no_compression, &table)
+        .serialize(&path_no_compression, &table)
         .unwrap();
 
-    let size_compressed = get_file_size(path_compression);
-    let size_no_compressed = get_file_size(path_no_compression);
+    let size_compressed = get_file_size(&path_compression);
+    let size_no_compressed = get_file_size(&path_no_compression);
 
     let _ = remove_file(path_compression);
     let _ = remove_file(path_no_compression);
@@ -91,18 +93,18 @@ fn test_lz4_and_vle_delta_compression_size_csv() {
     let serializer_compression = Serializer::new();
     let serializer_no_compression = Serializer::no_compression();
 
-    let path_compression = Path::new("tests/test_compressed_data.isdb");
-    let path_no_compression = Path::new("tests/test_uncompressed_data.isdb");
+    let path_compression = get_unique_test_file("test_compressed_data");
+    let path_no_compression = get_unique_test_file("test_uncompressed_data");
 
     serializer_compression
-        .serialize(path_compression, &table)
+        .serialize(&path_compression, &table)
         .unwrap();
     serializer_no_compression
-        .serialize(path_no_compression, &table)
+        .serialize(&path_no_compression, &table)
         .unwrap();
 
-    let size_compressed = get_file_size(path_compression);
-    let size_no_compressed = get_file_size(path_no_compression);
+    let size_compressed = get_file_size(&path_compression);
+    let size_no_compressed = get_file_size(&path_no_compression);
 
     let _ = remove_file(path_compression);
     let _ = remove_file(path_no_compression);

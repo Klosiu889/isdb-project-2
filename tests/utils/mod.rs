@@ -1,18 +1,20 @@
 use std::{
     fs::{self, File},
     io::Result,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use csv::ReaderBuilder;
 use proj2::{Column, Table};
-use rand::{random_bool, random_range};
+use rand::{random, random_bool, random_range};
 
 const STRING_SIZE_RANGE: std::ops::Range<usize> = 3..10;
 const INT64_SIZE_RANGE: std::ops::Range<i64> = -100..100;
 const CHARS_RANGE: std::ops::RangeInclusive<char> = 'a'..='z';
 const TABLE_ROWS_RANGE: std::ops::Range<usize> = 5..10;
 const TABLE_COLS_RANGE: std::ops::Range<usize> = 5..10;
+
+const TESTS_DIRECTORY: &'static str = "tests";
 
 pub fn generate_random_int_vec(size: usize) -> Vec<i64> {
     (0..size).map(|_| random_range(INT64_SIZE_RANGE)).collect()
@@ -56,6 +58,13 @@ pub fn generate_random_table() -> Table {
 
 pub fn get_file_size(path: &Path) -> u64 {
     fs::metadata(path).expect("Error reading file size").len()
+}
+
+pub fn get_unique_test_file(base: &str) -> PathBuf {
+    let random = random::<u64>();
+    let file_name = format!("{}_{}.isdb", base, random);
+
+    Path::new(TESTS_DIRECTORY).join(file_name)
 }
 
 pub fn get_table_from_csv(path: &Path) -> Result<Table> {
