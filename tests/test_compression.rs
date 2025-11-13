@@ -13,7 +13,7 @@ use crate::utils::{TESTS_DIRECTORY, generate_random_table, get_file_size, get_ta
 
 mod utils;
 
-const TEST_FILE: &'static str = "data/bmw_sales_data_2010_2014.csv";
+const TEST_FILE: &'static str = "data/bmw_sales_data_2010_2014_trimmed.csv";
 
 #[test]
 fn test_compression_correctness_random() {

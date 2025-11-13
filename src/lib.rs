@@ -37,36 +37,30 @@ const MAGIC: &[u8; 4] = b"ISBD";
 const FOOTER: &[u8; 4] = b"ENDC";
 const VERSION: u8 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ColumnType {
-    INT64,
-    STR,
+#[derive(Debug, PartialEq, Eq)]
+pub enum ColumnData {
+    INT64(Vec<i64>),
+    STR(Vec<String>),
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Column {
-    name: String,
-    col_type: ColumnType,
-    int_data: Option<Vec<i64>>,
-    str_data: Option<Vec<String>>,
+    pub name: String,
+    pub data: ColumnData,
 }
 
 impl Column {
     pub fn new_int_col(name: String, int_data: Vec<i64>) -> Self {
         Self {
             name,
-            col_type: ColumnType::INT64,
-            int_data: Some(int_data),
-            str_data: None,
+            data: ColumnData::INT64(int_data),
         }
     }
 
     pub fn new_str_col(name: String, str_data: Vec<String>) -> Self {
         Self {
             name,
-            col_type: ColumnType::STR,
-            int_data: None,
-            str_data: Some(str_data),
+            data: ColumnData::STR(str_data),
         }
     }
 }
@@ -80,6 +74,14 @@ pub struct Table {
 impl Table {
     pub fn new(num_rows: u64, columns: Vec<Column>) -> Self {
         Self { num_rows, columns }
+    }
+
+    pub fn iter_columns(&self) -> impl Iterator<Item = &Column> {
+        self.columns.iter()
+    }
+
+    pub fn iter_columns_mut(&mut self) -> impl Iterator<Item = &mut Column> {
+        self.columns.iter_mut()
     }
 }
 
@@ -147,9 +149,9 @@ impl Serializer {
             f.write_all(&(column.name.len() as u8).to_le_bytes())?;
             f.write_all(column.name.as_bytes())?;
 
-            let type_byte = match column.col_type {
-                ColumnType::INT64 => 0u8,
-                ColumnType::STR => 1u8,
+            let type_byte = match column.data {
+                ColumnData::INT64(_) => 0u8,
+                ColumnData::STR(_) => 1u8,
             };
             f.write_all(&[type_byte])?;
 
@@ -158,7 +160,7 @@ impl Serializer {
             f.write_all(&0u64.to_le_bytes())?; // placeholder
             f.write_all(&0u64.to_le_bytes())?; // placeholder
 
-            if column.col_type == ColumnType::STR {
+            if matches!(column.data, ColumnData::STR(_)) {
                 f.write_all(&0u64.to_le_bytes())?; // placeholder
             }
         }
@@ -178,28 +180,16 @@ impl Serializer {
 
         let mut offsets_and_lengths = Vec::<Location>::new();
         for column in &table.columns {
-            match column.col_type {
-                ColumnType::INT64 => {
-                    let compressed_data = self.int_compressor.compress(
-                        column
-                            .int_data
-                            .as_ref()
-                            .map(|d| d.as_slice())
-                            .unwrap_or(&[]),
-                    )?;
+            match &column.data {
+                ColumnData::INT64(data) => {
+                    let compressed_data = self.int_compressor.compress(data.as_slice())?;
                     let offset = f.stream_position()?;
                     let length = compressed_data.len() as u64;
                     offsets_and_lengths.push(Location::INT { offset, length });
                     f.write_all(&compressed_data)?;
                 }
-                ColumnType::STR => {
-                    let compressed_data = self.string_compressor.compress(
-                        column
-                            .str_data
-                            .as_ref()
-                            .map(|d| d.as_slice())
-                            .unwrap_or(&[]),
-                    )?;
+                ColumnData::STR(data) => {
+                    let compressed_data = self.string_compressor.compress(data.as_slice())?;
                     let compressed_str_data = compressed_data.data;
                     let lengths = compressed_data.lengths;
 
@@ -270,7 +260,7 @@ impl Serializer {
         #[derive(Debug)]
         struct ColumnDescription {
             name: String,
-            col_type: ColumnType,
+            data: ColumnData,
             offset: u64,
             length: u64,
             length2: u64,
@@ -287,9 +277,9 @@ impl Serializer {
 
             let mut t = [0u8; 1];
             f.read_exact(&mut t)?;
-            let col_type = match t[0] {
-                0u8 => ColumnType::INT64,
-                1u8 => ColumnType::STR,
+            let data = match t[0] {
+                0u8 => ColumnData::INT64(Vec::new()),
+                1u8 => ColumnData::STR(Vec::new()),
                 _ => {
                     return Err(SerializerError::InvalidFileFormat(format!(
                         "Invalid column type at column: {}",
@@ -306,21 +296,21 @@ impl Serializer {
             f.read_exact(&mut len)?;
             let length = u64::from_le_bytes(len);
 
-            let description = match col_type {
-                ColumnType::INT64 => ColumnDescription {
+            let description = match data {
+                ColumnData::INT64(_) => ColumnDescription {
                     name,
-                    col_type,
+                    data,
                     offset,
                     length,
                     length2: 0u64,
                 },
-                ColumnType::STR => {
+                ColumnData::STR(_) => {
                     let mut len2 = [0u8; 8];
                     f.read_exact(&mut len2)?;
                     let length2 = u64::from_le_bytes(len2);
                     ColumnDescription {
                         name,
-                        col_type,
+                        data,
                         offset,
                         length,
                         length2,
@@ -337,18 +327,13 @@ impl Serializer {
             let mut buf = vec![0u8; desc.length as usize];
             f.read_exact(&mut buf)?;
 
-            match desc.col_type {
-                ColumnType::INT64 => {
+            match desc.data {
+                ColumnData::INT64(_) => {
                     let mut int_data = self.int_compressor.decompress(&buf)?;
                     int_data.resize(num_rows as usize, 0i64);
-                    columns.push(Column {
-                        name: desc.name,
-                        col_type: desc.col_type,
-                        int_data: Some(int_data),
-                        str_data: None,
-                    })
+                    columns.push(Column::new_int_col(desc.name, int_data));
                 }
-                ColumnType::STR => {
+                ColumnData::STR(_) => {
                     let mut buf2 = vec![0u8; desc.length2 as usize];
                     f.read_exact(&mut buf2)?;
 
@@ -359,12 +344,7 @@ impl Serializer {
                             lengths: lengths_data,
                         })?;
                     str_data.resize(num_rows as usize, "".to_string());
-                    columns.push(Column {
-                        name: desc.name,
-                        col_type: desc.col_type,
-                        int_data: None,
-                        str_data: Some(str_data),
-                    })
+                    columns.push(Column::new_str_col(desc.name, str_data));
                 }
             }
         }
