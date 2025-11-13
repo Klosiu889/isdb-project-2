@@ -20,7 +20,6 @@ fn main() -> Result<(), SerializerError> {
             }
             ColumnData::STR(col_data) => {
                 let mut characters_counts = [0u64; 256];
-                println!("{:?}", col_data);
                 col_data.iter().for_each(|value| {
                     value
                         .as_bytes()
