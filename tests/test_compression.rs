@@ -13,16 +13,33 @@ use crate::utils::{TESTS_DIRECTORY, generate_random_table, get_file_size, get_ta
 
 mod utils;
 
+const TEST_FILE: &'static str = "data/bmw_sales_data_2010_2014.csv";
+
 #[test]
-fn test_compression_correctness() {
+fn test_compression_correctness_random() {
     let seed = 42;
     let mut rng = StdRng::seed_from_u64(seed);
     let table = generate_random_table(&mut rng);
     let serializer = Serializer::new();
 
-    let path = Path::new("tests/test_data.isdb");
-    serializer.serialize(path, &table).unwrap();
-    let deserialized_table = serializer.deserialize(path).unwrap();
+    let path = Path::new(TESTS_DIRECTORY).join("test_compression_correctness_random.isdb");
+    serializer.serialize(&path, &table).unwrap();
+    let deserialized_table = serializer.deserialize(&path).unwrap();
+
+    let _ = remove_file(path);
+
+    assert_eq!(table, deserialized_table);
+}
+
+#[test]
+fn test_compression_correctness() {
+    let path = Path::new(TESTS_DIRECTORY).join(TEST_FILE);
+    let table = get_table_from_csv(&path).expect("Error reading file");
+    let serializer = Serializer::new();
+
+    let path = Path::new(TESTS_DIRECTORY).join("test_compression_correctness.isdb");
+    serializer.serialize(&path, &table).unwrap();
+    let deserialized_table = serializer.deserialize(&path).unwrap();
 
     let _ = remove_file(path);
 
@@ -31,7 +48,7 @@ fn test_compression_correctness() {
 
 #[test]
 fn test_lz4_compression_size_csv() {
-    let path = Path::new(TESTS_DIRECTORY).join("data/titanic.csv");
+    let path = Path::new(TESTS_DIRECTORY).join(TEST_FILE);
     let table = get_table_from_csv(&path).expect("Error reading file");
     let serializer_compression = Serializer::with_compressors(
         IntCompressors::None(NoIntCompressor),
@@ -62,7 +79,7 @@ fn test_lz4_compression_size_csv() {
 
 #[test]
 fn test_vle_delta_compression_size_csv() {
-    let path = Path::new(TESTS_DIRECTORY).join("data/titanic.csv");
+    let path = Path::new(TESTS_DIRECTORY).join(TEST_FILE);
     let table = get_table_from_csv(&path).expect("Error reading file");
     let serializer_compression = Serializer::with_compressors(
         IntCompressors::VleDelta(VleDeltaIntCompressor),
@@ -93,7 +110,7 @@ fn test_vle_delta_compression_size_csv() {
 
 #[test]
 fn test_lz4_and_vle_delta_compression_size_csv() {
-    let path = Path::new(TESTS_DIRECTORY).join("data/titanic.csv");
+    let path = Path::new(TESTS_DIRECTORY).join(TEST_FILE);
     let table = get_table_from_csv(&path).expect("Error reading file");
     let serializer_compression = Serializer::new();
     let serializer_no_compression = Serializer::no_compression();

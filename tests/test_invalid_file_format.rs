@@ -57,7 +57,7 @@ fn test_invalid_column_type() {
 
     assert!(matches!(result, Err(SerializerError::InvalidFileFormat(_))));
     if let Err(SerializerError::InvalidFileFormat(msg)) = result {
-        assert_eq!(msg, "Invalid column type as column: 0");
+        assert_eq!(msg, "Invalid column type at column: 0");
     }
 }
 #[test]

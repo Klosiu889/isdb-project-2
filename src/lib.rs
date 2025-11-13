@@ -251,7 +251,7 @@ impl Serializer {
         f.read_exact(&mut magic)?;
         if &magic != MAGIC {
             return Err(SerializerError::InvalidFileFormat(
-                "Incorrect file indicator".to_string(),
+                "Invalid file indicator".to_string(),
             ));
         }
 
