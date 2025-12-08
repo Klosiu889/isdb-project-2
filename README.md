@@ -1,1 +1,1 @@
-Do uruchomenia aplikacji urzywam dodatkowo docker compose.
+Do uruchomienia apliakcji należy użyć polecenia docker compose up -d.
