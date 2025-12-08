@@ -1,17 +1,21 @@
 IMAGE_NAME ?= proj2
 IMAGE_TAG ?= latest
+NAME := ISDB
 PORT := 8080
 DATA_DIR ?= ./data
 
 IMAGE := $(IMAGE_NAME):$(IMAGE_TAG)
 
-.PHONY: build run clean
+.PHONY: build up down clean
 
 build:
-	docker build -t $(IMAGE) .
+	docker-compose build
 
-run:
-	docker run -p $(PORT):$(PORT) -v $(DATA_DIR):/data $(IMAGE)
+up:
+	docker-compose up -d
+
+down:
+	docker-compose down
 
 clean:
-	docker image rm $(IMAGE) || true
+	docker-compose down --rmi local -v

@@ -41,4 +41,4 @@ COPY metastore.json .
 
 EXPOSE 8080
 
-CMD ["./proj2"]
+ENTRYPOINT ["./proj2"]

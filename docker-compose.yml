@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  proj2:
+    build: .
+    container_name: isdb
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ./metastore.json:/app/metastore.json
+    restart: unless-stopped
+    environment:
+      RUST_LOG: info
