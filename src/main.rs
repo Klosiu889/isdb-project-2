@@ -1,56 +1,44 @@
-use std::{collections::HashMap, path::Path};
+use clap::{Arg, Command};
+use lib::Serializer;
+use tokio::signal;
 
-use proj2::{ColumnData, Serializer, SerializerError};
+use crate::metastore::{load_metastore, save_metastore};
+mod executor;
+mod metastore;
+mod planner;
+mod query;
+mod server;
 
-fn main() -> Result<(), SerializerError> {
-    let path = Path::new("data/bmw_sales_data_2010_2014.isdb");
+const METASTORE_FILE: &str = "metastore.json";
+
+#[tokio::main]
+async fn main() {
+    env_logger::init();
+
+    let matches = Command::new("server")
+        .arg(
+            Arg::new("https")
+                .long("https")
+                .help("Whether to use HTTPS or not"),
+        )
+        .get_matches();
+
+    let addr = "127.0.0.1:8080";
 
     let serializer = Serializer::new();
-    let data = serializer.deserialize(path)?;
 
-    let mut averages = HashMap::new();
-    let mut ascii_counts = HashMap::new();
+    let metastore = load_metastore(METASTORE_FILE, &serializer).await;
 
-    for column in data.iter_columns() {
-        match &column.data {
-            ColumnData::INT64(col_data) => {
-                let sum: i64 = col_data.iter().sum();
-                let count = col_data.len();
-                averages.insert(column.name.clone(), sum as f64 / count as f64);
-            }
-            ColumnData::STR(col_data) => {
-                let mut characters_counts = [0u64; 256];
-                col_data.iter().for_each(|value| {
-                    value
-                        .as_bytes()
-                        .iter()
-                        .for_each(|b| characters_counts[*b as usize] += 1u64)
-                });
+    let server_handler = tokio::spawn(server::create(
+        addr,
+        matches.contains_id("https"),
+        metastore.clone(),
+    ));
 
-                ascii_counts.insert(column.name.clone(), characters_counts);
-            }
-        }
-    }
+    signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
 
-    println!("Averages:");
-    averages
-        .iter()
-        .for_each(|(col_name, average)| println!("{} -> {}", col_name, average));
-    println!("");
+    println!("Shutting down server, saving metastore...");
+    save_metastore(metastore, METASTORE_FILE, &serializer).await;
 
-    println!("Ascii characters counts:");
-    ascii_counts.iter().for_each(|(col_name, counts)| {
-        println!(
-            "{} -> {}",
-            col_name,
-            counts
-                .iter()
-                .enumerate()
-                .map(|(i, c)| format!("{}: {}", i, c))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    });
-
-    Ok(())
+    server_handler.abort();
 }

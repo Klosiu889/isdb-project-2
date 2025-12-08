@@ -37,13 +37,13 @@ const MAGIC: &[u8; 4] = b"ISBD";
 const FOOTER: &[u8; 4] = b"ENDC";
 const VERSION: u8 = 1;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ColumnData {
     INT64(Vec<i64>),
     STR(Vec<String>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Column {
     pub name: String,
     pub data: ColumnData,
@@ -65,10 +65,10 @@ impl Column {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct Table {
-    num_rows: u64,
-    columns: Vec<Column>,
+    pub num_rows: u64,
+    pub columns: Vec<Column>,
 }
 
 impl Table {
@@ -82,6 +82,14 @@ impl Table {
 
     pub fn iter_columns_mut(&mut self) -> impl Iterator<Item = &mut Column> {
         self.columns.iter_mut()
+    }
+
+    pub fn get_num_rows(&self) -> u64 {
+        self.num_rows
+    }
+
+    pub fn get_num_cols(&self) -> usize {
+        self.columns.len()
     }
 }
 
