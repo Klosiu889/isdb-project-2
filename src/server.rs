@@ -1,9 +1,9 @@
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use crate::executor::Executor;
 use crate::metastore::{self, Metastore, MetastoreError, SharedMetastore};
-use crate::planner::Planner;
+use crate::query::QueryEngine;
 use hyper::server::conn::http1;
 use hyper::service::Service;
 use hyper_util::rt::TokioIo;
@@ -32,7 +32,15 @@ pub async fn create(addr: &str, https: bool, metastore: SharedMetastore) {
     let addr: SocketAddr = addr.parse().expect("Failed to parse bind address");
     let listener = TcpListener::bind(&addr).await.unwrap();
 
-    let server = Server::new(metastore);
+    let (sender, receiver) = mpsc::channel(100);
+
+    let engine = QueryEngine::new(metastore.clone());
+
+    tokio::spawn(async move {
+        engine.run(receiver).await;
+    });
+
+    let server = Server::new(metastore, sender);
 
     let service = MakeService::new(server);
     let service = MakeAllowAllAuthenticator::new(service, "cosmo");
@@ -126,28 +134,19 @@ pub struct Server {
     author: String,
     start_time: Instant,
     metastore: Arc<RwLock<Metastore>>,
-    planner: Planner,
-    executor: Executor,
+    query_queue: mpsc::Sender<String>,
 }
 
 impl Server {
-    pub fn new(metastore: SharedMetastore) -> Self {
+    pub fn new(metastore: SharedMetastore, query_queue: mpsc::Sender<String>) -> Self {
         Server {
             version: SERVER_VERSION.to_string(),
             interface_version: INTERFACE_VERSION.to_string(),
             author: AUTHOR.to_string(),
             start_time: Instant::now(),
             metastore,
-            planner: Planner::new(),
-            executor: Executor::new(),
+            query_queue,
         }
-    }
-
-    async fn handle_query(&self, query_id: String) {
-        let plan = self.planner.plan(&query_id, &self.metastore).await;
-        self.executor
-            .execute(&query_id, plan, &self.metastore)
-            .await;
     }
 }
 
@@ -258,7 +257,7 @@ where
 
         match result {
             Ok(id) => {
-                self.handle_query(id.clone()).await;
+                self.query_queue.send(id.clone()).await;
                 Ok(SubmitQueryResponse::QueryHasBeenCreatedSuccessfully(id))
             }
             Err(MetastoreError::QueryCreationError(errors)) => {

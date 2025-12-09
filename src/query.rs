@@ -1,5 +1,9 @@
+use log::info;
 use openapi_client::models::QueryStatus;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+
+use crate::{executor::Executor, metastore::SharedMetastore, planner::Planner};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SelectQuery {
@@ -35,43 +39,51 @@ pub struct QueryResult {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Query {
-    status: QueryStatus,
-    description: QueryDefinition,
-    result: Option<Vec<QueryResult>>,
-    errors: Option<Vec<QueryError>>,
+    pub(crate) status: QueryStatus,
+    pub(crate) definition: QueryDefinition,
+    pub(crate) result: Option<Vec<QueryResult>>,
+    pub(crate) errors: Option<Vec<QueryError>>,
 }
 
 impl Query {
-    pub fn new(status: QueryStatus, description: QueryDefinition) -> Self {
+    pub fn new(status: QueryStatus, definition: QueryDefinition) -> Self {
         Self {
             status,
-            description,
+            definition,
             result: None,
             errors: None,
         }
     }
+}
 
-    pub fn get_status(&self) -> &QueryStatus {
-        &self.status
+pub struct QueryEngine {
+    planner: Planner,
+    executor: Executor,
+    metastore: SharedMetastore,
+}
+
+impl QueryEngine {
+    pub fn new(metastore: SharedMetastore) -> Self {
+        Self {
+            planner: Planner::new(),
+            executor: Executor::new(),
+            metastore,
+        }
     }
 
-    pub fn get_definition(&self) -> &QueryDefinition {
-        &self.description
+    pub async fn run(self, mut receiver: mpsc::Receiver<String>) {
+        info!("Query Engine started and waiting for jobs...");
+
+        while let Some(query_id) = receiver.recv().await {
+            info!("Engine received query: {}", query_id);
+            self.process_query(&query_id).await;
+        }
+
+        info!("Query Engine channel closed. Shutting down worker.");
     }
 
-    pub fn get_result(&self) -> &Option<Vec<QueryResult>> {
-        &self.result
-    }
-
-    pub fn get_errors(&self) -> &Option<Vec<QueryError>> {
-        &self.errors
-    }
-
-    pub fn set_status(&mut self, status: QueryStatus) {
-        self.status = status;
-    }
-
-    pub fn set_result(&mut self, result: Vec<QueryResult>) {
-        self.result = Some(result);
+    async fn process_query(&self, query_id: &String) {
+        let plan = self.planner.plan(query_id, &self.metastore).await;
+        self.executor.execute(query_id, plan, &self.metastore).await;
     }
 }

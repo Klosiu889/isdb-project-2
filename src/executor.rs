@@ -49,14 +49,14 @@ impl Executor {
         {
             let mut metastore_guard = metastore.write().await;
             let query = metastore_guard.get_query_internal_mut(query_id).unwrap();
-            query.set_status(QueryStatus::Running);
+            query.status = QueryStatus::Running;
         }
 
         {
             let mut metastore_guard = metastore.write().await;
             let query = metastore_guard.get_query_internal_mut(query_id).unwrap();
-            query.set_status(QueryStatus::Completed);
-            query.set_result(vec![QueryResult { table_id }])
+            query.status = QueryStatus::Completed;
+            query.result = Some(vec![QueryResult { table_id }])
         }
     }
 
@@ -73,7 +73,7 @@ impl Executor {
         let file = File::open(file_path).unwrap();
         let mut metastore_guard = metastore.write().await;
         let query = metastore_guard.get_query_internal_mut(query_id).unwrap();
-        query.set_status(QueryStatus::Running);
+        query.status = QueryStatus::Running;
         let table = metastore_guard.get_table_internal_mut(&table_id).unwrap();
         let mut rdr = ReaderBuilder::new()
             .has_headers(has_headers)

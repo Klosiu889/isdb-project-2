@@ -24,9 +24,9 @@ impl Planner {
     pub async fn plan(&self, query_id: &String, metastore: &SharedMetastore) -> PhysicalPlan {
         let mut metastore_guard = metastore.write().await;
         let query = metastore_guard.get_query_internal_mut(query_id).unwrap();
-        query.set_status(openapi_client::models::QueryStatus::Planning);
+        query.status = openapi_client::models::QueryStatus::Planning;
 
-        match query.get_definition() {
+        match &query.definition {
             QueryDefinition::SELECT(select) => PhysicalPlan::SelectAll {
                 table_id: select.table_id.clone(),
             },

@@ -10,7 +10,7 @@ use uuid::Uuid;
 use lib::{Column, ColumnData, Serializer as TableSerializer, Table};
 use openapi_client::models::{
     Column as OpenapiColumn, CopyQuery, LogicalColumnType, Query as OpenapiQuery,
-    QueryQueryDefinition, QueryResultInner, QueryResultInnerColumnsInner, SelectQuery,
+    QueryQueryDefinition, QueryResultInner, QueryResultInnerColumnsInner, QueryStatus, SelectQuery,
     ShallowQuery, ShallowTable, TableSchema,
 };
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,7 @@ pub enum MetastoreError {
 pub struct Metastore {
     scheduled_for_deletion: HashSet<String>,
     tables: HashMap<String, TableMetaData>,
+    tables_name_id: HashMap<String, String>,
     table_accesses: HashMap<String, HashSet<String>>,
     queries: HashMap<String, Query>,
     results: HashMap<String, String>,
@@ -77,6 +78,7 @@ impl Metastore {
         Self {
             scheduled_for_deletion: HashSet::new(),
             tables: HashMap::new(),
+            tables_name_id: HashMap::new(),
             table_accesses: HashMap::new(),
             queries: HashMap::new(),
             results: HashMap::new(),
@@ -143,11 +145,7 @@ impl Metastore {
 
     pub fn create_table(&mut self, table_schema: TableSchema) -> Result<String, MetastoreError> {
         let mut errors = vec![];
-        let existing_table_id = self
-            .tables
-            .iter()
-            .find(|(_, metadata)| metadata.name == table_schema.name)
-            .map(|(id, _)| id);
+        let existing_table_id = self.tables_name_id.get(&table_schema.name);
 
         if let Some(id) = existing_table_id
             && !self.scheduled_for_deletion.contains(id)
@@ -182,11 +180,13 @@ impl Metastore {
         let table = Table::new(0, columns);
         let table_id = Uuid::new_v4().to_string();
         let metadata = TableMetaData {
-            name: table_schema.name,
+            name: table_schema.name.clone(),
             table,
             table_file: format!("{}/{}.{}", TABLES_DIR, table_id, FILE_EXTENSION),
         };
         self.tables.insert(table_id.clone(), metadata);
+        self.tables_name_id
+            .insert(table_schema.name, table_id.clone());
 
         Ok(table_id)
     }
@@ -196,7 +196,7 @@ impl Metastore {
             .iter()
             .map(|(id, query)| ShallowQuery {
                 query_id: id.clone(),
-                status: query.get_status().clone(),
+                status: query.status.clone(),
             })
             .collect()
     }
@@ -204,9 +204,9 @@ impl Metastore {
     pub fn get_query(&self, id: String) -> Result<OpenapiQuery, MetastoreError> {
         let query = self.queries.get(&id).map(|query| OpenapiQuery {
             query_id: id.clone(),
-            status: query.get_status().clone(),
+            status: query.status.clone(),
             is_result_available: Some(self.results.contains_key(&id)),
-            query_definition: match query.get_definition() {
+            query_definition: match &query.definition {
                 QueryDefinition::SELECT(val) => {
                     Some(QueryQueryDefinition::from(OneOf2::A(SelectQuery {
                         table_name: Some(val.table_name.clone()),
@@ -239,13 +239,12 @@ impl Metastore {
                 "Missing table name",
             )]))?;
 
-        let (table_id, _) = self
-            .tables
-            .iter()
-            .find(|(_, metadata)| metadata.name == *table_name)
-            .ok_or(MetastoreError::QueryCreationError(vec![
-                Error::with_context("There is no table with that name", table_name.to_string()),
-            ]))?;
+        let table_id =
+            self.tables_name_id
+                .get(table_name)
+                .ok_or(MetastoreError::QueryCreationError(vec![
+                    Error::with_context("There is no table with that name", table_name.to_string()),
+                ]))?;
 
         let query_id = Uuid::new_v4().to_string();
         self.table_accesses
@@ -255,7 +254,7 @@ impl Metastore {
         self.queries.insert(
             query_id.clone(),
             Query::new(
-                openapi_client::models::QueryStatus::Created,
+                QueryStatus::Created,
                 QueryDefinition::SELECT(query::SelectQuery {
                     table_id: table_id.clone(),
                     table_name: table_name.clone(),
@@ -274,10 +273,9 @@ impl Metastore {
             ]));
         }
 
-        let (table_id, _) = self
-            .tables
-            .iter()
-            .find(|(_, metadata)| metadata.name == *query.destination_table_name)
+        let table_id = self
+            .tables_name_id
+            .get(&query.destination_table_name)
             .ok_or(MetastoreError::QueryCreationError(vec![
                 Error::with_context(
                     "There is no table with that name",
@@ -320,7 +318,7 @@ impl Metastore {
             )))?;
 
         let result = query
-            .get_result()
+            .result
             .as_ref()
             .ok_or(MetastoreError::QueryResultAccessError(Error::new(
                 "Result for this query is not available",
@@ -378,7 +376,7 @@ impl Metastore {
             )))?;
 
         let result = query
-            .get_result()
+            .result
             .as_ref()
             .ok_or(MetastoreError::QueryResultAccessError(Error::new(
                 "Result for this query is not available",
@@ -429,12 +427,12 @@ impl Metastore {
         Ok(r)
     }
 
-    pub fn get_query_error(&self, id: String) -> Result<&Vec<QueryError>, MetastoreError> {
+    pub fn get_query_error(&self, id: String) -> Result<Vec<QueryError>, MetastoreError> {
         let query = self.queries.get(&id);
 
         match query {
-            Some(existing_query) => match existing_query.get_errors() {
-                Some(errors) => Ok(errors),
+            Some(existing_query) => match &existing_query.errors {
+                Some(errors) => Ok(errors.clone()),
                 None => Err(MetastoreError::QueryErrorAccessError(Error::new(
                     "Error for this query is not available",
                 ))),
