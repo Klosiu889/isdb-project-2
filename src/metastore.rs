@@ -101,14 +101,14 @@ impl Metastore {
             .collect()
     }
 
-    pub fn get_table(&self, id: String) -> Result<TableSchema, MetastoreError> {
-        if self.scheduled_for_deletion.contains(&id) {
+    pub fn get_table(&self, id: &String) -> Result<TableSchema, MetastoreError> {
+        if self.scheduled_for_deletion.contains(id) {
             return Err(MetastoreError::TableAccessError(Error::new(
                 "Couldn't find a table of given ID",
             )));
         }
 
-        let table = self.tables.get(&id).map(|metadata| TableSchema {
+        let table = self.tables.get(id).map(|metadata| TableSchema {
             name: metadata.name.clone(),
             columns: metadata
                 .table
@@ -131,15 +131,15 @@ impl Metastore {
         }
     }
 
-    pub fn delete_table(&mut self, id: String) -> Result<(), MetastoreError> {
-        if self.scheduled_for_deletion.contains(&id) {
+    pub fn delete_table(&mut self, id: &String) -> Result<(), MetastoreError> {
+        if self.scheduled_for_deletion.contains(id) {
             return Err(MetastoreError::TableDeletionError(Error::new(
                 "Couldn't find a table of given ID",
             )));
         }
 
-        if self.tables.contains_key(&id) {
-            self.scheduled_for_deletion.insert(id);
+        if self.tables.contains_key(id) {
+            self.scheduled_for_deletion.insert(id.clone());
             return Ok(());
         }
 
@@ -206,11 +206,11 @@ impl Metastore {
             .collect()
     }
 
-    pub fn get_query(&self, id: String) -> Result<OpenapiQuery, MetastoreError> {
-        let query = self.queries.get(&id).map(|query| OpenapiQuery {
+    pub fn get_query(&self, id: &String) -> Result<OpenapiQuery, MetastoreError> {
+        let query = self.queries.get(id).map(|query| OpenapiQuery {
             query_id: id.clone(),
             status: query.status.clone().into(),
-            is_result_available: Some(self.results.contains_key(&id)),
+            is_result_available: Some(self.results.contains_key(id)),
             query_definition: match &query.definition {
                 QueryDefinition::Select(val) => {
                     Some(QueryQueryDefinition::from(OneOf2::A(SelectQuery {
@@ -312,12 +312,12 @@ impl Metastore {
 
     pub fn get_query_result(
         &self,
-        query_id: String,
+        query_id: &String,
         row_limit: Option<i32>,
     ) -> Result<Vec<QueryResultInner>, MetastoreError> {
         let query = self
             .queries
-            .get(&query_id)
+            .get(query_id)
             .ok_or(MetastoreError::QueryAccessError(Error::new(
                 "Couldn't find a query of given ID",
             )))?;
@@ -370,12 +370,12 @@ impl Metastore {
 
     pub fn get_query_result_flush(
         &mut self,
-        query_id: String,
+        query_id: &String,
         row_limit: Option<i32>,
     ) -> Result<Vec<QueryResultInner>, MetastoreError> {
         let query = self
             .queries
-            .get(&query_id)
+            .get(query_id)
             .ok_or(MetastoreError::QueryAccessError(Error::new(
                 "Couldn't find a query of given ID",
             )))?;
@@ -425,15 +425,15 @@ impl Metastore {
 
         table_ids.iter().for_each(|id| {
             if let Some(set) = self.table_accesses.get_mut(id) {
-                set.remove(&query_id);
+                set.remove(query_id);
             }
         });
 
         Ok(r)
     }
 
-    pub fn get_query_error(&self, id: String) -> Result<Vec<QueryError>, MetastoreError> {
-        let query = self.queries.get(&id);
+    pub fn get_query_error(&self, id: &String) -> Result<Vec<QueryError>, MetastoreError> {
+        let query = self.queries.get(id);
 
         match query {
             Some(existing_query) => match &existing_query.errors {
