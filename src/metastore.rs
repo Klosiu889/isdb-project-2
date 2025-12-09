@@ -10,14 +10,14 @@ use uuid::Uuid;
 use lib::{Column, ColumnData, Serializer as TableSerializer, Table};
 use openapi_client::models::{
     Column as OpenapiColumn, CopyQuery, LogicalColumnType, Query as OpenapiQuery,
-    QueryQueryDefinition, QueryResultInner, QueryResultInnerColumnsInner, QueryStatus, SelectQuery,
-    ShallowQuery, ShallowTable, TableSchema,
+    QueryQueryDefinition, QueryResultInner, QueryResultInnerColumnsInner, SelectQuery,
+    ShallowQuery, TableSchema,
 };
 use serde::{Deserialize, Serialize};
 use swagger::OneOf2;
 use tokio::sync::RwLock;
 
-use crate::query::{self, Query, QueryDefinition, QueryError};
+use crate::query::{self, Query, QueryDefinition, QueryError, QueryStatus};
 
 const TABLES_DIR: &str = "tables";
 const FILE_EXTENSION: &str = "isdb";
@@ -32,8 +32,8 @@ struct TableMetaData {
 
 #[derive(Debug)]
 pub struct Error {
-    pub message: String,
-    pub context: Option<String>,
+    pub(crate) message: String,
+    pub(crate) context: Option<String>,
 }
 
 impl Error {
@@ -196,7 +196,7 @@ impl Metastore {
             .iter()
             .map(|(id, query)| ShallowQuery {
                 query_id: id.clone(),
-                status: query.status.clone(),
+                status: query.status.clone().into(),
             })
             .collect()
     }
@@ -204,15 +204,15 @@ impl Metastore {
     pub fn get_query(&self, id: String) -> Result<OpenapiQuery, MetastoreError> {
         let query = self.queries.get(&id).map(|query| OpenapiQuery {
             query_id: id.clone(),
-            status: query.status.clone(),
+            status: query.status.clone().into(),
             is_result_available: Some(self.results.contains_key(&id)),
             query_definition: match &query.definition {
-                QueryDefinition::SELECT(val) => {
+                QueryDefinition::Select(val) => {
                     Some(QueryQueryDefinition::from(OneOf2::A(SelectQuery {
                         table_name: Some(val.table_name.clone()),
                     })))
                 }
-                QueryDefinition::COPY(val) => {
+                QueryDefinition::Copy(val) => {
                     Some(QueryQueryDefinition::from(OneOf2::B(CopyQuery {
                         source_filepath: val.source_filepath.clone(),
                         destination_table_name: val.table_name.clone(),
@@ -255,7 +255,7 @@ impl Metastore {
             query_id.clone(),
             Query::new(
                 QueryStatus::Created,
-                QueryDefinition::SELECT(query::SelectQuery {
+                QueryDefinition::Select(query::SelectQuery {
                     table_id: table_id.clone(),
                     table_name: table_name.clone(),
                 }),
@@ -291,8 +291,8 @@ impl Metastore {
         self.queries.insert(
             query_id.clone(),
             Query::new(
-                openapi_client::models::QueryStatus::Created,
-                QueryDefinition::COPY(query::CopyQuery {
+                QueryStatus::Created,
+                QueryDefinition::Copy(query::CopyQuery {
                     table_id: table_id.clone(),
                     table_name: query.destination_table_name.clone(),
                     source_filepath: query.source_filepath.clone(),

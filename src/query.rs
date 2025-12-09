@@ -1,5 +1,5 @@
 use log::info;
-use openapi_client::models::QueryStatus;
+use openapi_client::models;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -21,9 +21,30 @@ pub struct CopyQuery {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub enum QueryStatus {
+    Created,
+    Planning,
+    Running,
+    Completed,
+    Failed,
+}
+
+impl From<QueryStatus> for models::QueryStatus {
+    fn from(value: QueryStatus) -> Self {
+        match value {
+            QueryStatus::Created => models::QueryStatus::Created,
+            QueryStatus::Planning => models::QueryStatus::Planning,
+            QueryStatus::Running => models::QueryStatus::Running,
+            QueryStatus::Completed => models::QueryStatus::Completed,
+            QueryStatus::Failed => models::QueryStatus::Failed,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub enum QueryDefinition {
-    SELECT(SelectQuery),
-    COPY(CopyQuery),
+    Select(SelectQuery),
+    Copy(CopyQuery),
 }
 
 #[derive(Clone, Serialize, Deserialize)]

@@ -1,4 +1,7 @@
-use crate::{metastore::SharedMetastore, query::QueryDefinition};
+use crate::{
+    metastore::SharedMetastore,
+    query::{QueryDefinition, QueryStatus},
+};
 
 pub enum PhysicalPlan {
     SelectAll {
@@ -24,13 +27,13 @@ impl Planner {
     pub async fn plan(&self, query_id: &String, metastore: &SharedMetastore) -> PhysicalPlan {
         let mut metastore_guard = metastore.write().await;
         let query = metastore_guard.get_query_internal_mut(query_id).unwrap();
-        query.status = openapi_client::models::QueryStatus::Planning;
+        query.status = QueryStatus::Planning;
 
         match &query.definition {
-            QueryDefinition::SELECT(select) => PhysicalPlan::SelectAll {
+            QueryDefinition::Select(select) => PhysicalPlan::SelectAll {
                 table_id: select.table_id.clone(),
             },
-            QueryDefinition::COPY(copy) => PhysicalPlan::CopyFromCsv {
+            QueryDefinition::Copy(copy) => PhysicalPlan::CopyFromCsv {
                 table_id: copy.table_id.clone(),
                 table_name: copy.table_name.clone(),
                 file_path: copy.source_filepath.clone(),

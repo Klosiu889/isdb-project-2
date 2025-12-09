@@ -2,9 +2,12 @@ use std::fs::File;
 
 use csv::ReaderBuilder;
 use lib::Column;
-use openapi_client::models::QueryStatus;
 
-use crate::{metastore::SharedMetastore, planner::PhysicalPlan, query::QueryResult};
+use crate::{
+    metastore::SharedMetastore,
+    planner::PhysicalPlan,
+    query::{QueryResult, QueryStatus},
+};
 
 #[derive(Clone)]
 pub struct Executor {}
