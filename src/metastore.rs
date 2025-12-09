@@ -210,7 +210,7 @@ impl Metastore {
             query_definition: match &query.definition {
                 QueryDefinition::Select(val) => {
                     Some(QueryQueryDefinition::from(OneOf2::A(SelectQuery {
-                        table_name: Some(val.table_name.clone()),
+                        table_name: val.table_name.clone(),
                     })))
                 }
                 QueryDefinition::Copy(val) => {
@@ -233,19 +233,12 @@ impl Metastore {
     }
 
     pub fn create_select_query(&mut self, query: &SelectQuery) -> Result<String, MetastoreError> {
-        let table_name = query
-            .table_name
-            .as_ref()
-            .ok_or(MetastoreError::QueryCreationError(vec![Error::new(
-                "Missing table name",
-            )]))?;
-
-        let table_id =
-            self.tables_name_id
-                .get(table_name)
-                .ok_or(MetastoreError::QueryCreationError(vec![
-                    Error::with_context("There is no table with that name", table_name.to_string()),
-                ]))?;
+        let table_id = self.tables_name_id.get(&query.table_name).ok_or(
+            MetastoreError::QueryCreationError(vec![Error::with_context(
+                "There is no table with that name",
+                query.table_name.clone(),
+            )]),
+        )?;
 
         let query_id = Uuid::new_v4().to_string();
         self.table_accesses
@@ -258,7 +251,7 @@ impl Metastore {
                 QueryStatus::Created,
                 QueryDefinition::Select(query::SelectQuery {
                     table_id: table_id.clone(),
-                    table_name: table_name.clone(),
+                    table_name: query.table_name.clone(),
                 }),
             ),
         );

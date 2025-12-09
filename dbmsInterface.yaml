@@ -329,6 +329,8 @@ components:
 
     SelectQuery:
       description: Description of a select query (extension in project no 4)
+      required:
+        - tableName
       properties:
         tableName:
           type: string
