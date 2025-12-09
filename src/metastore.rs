@@ -1,7 +1,8 @@
+use log::warn;
 use std::{
     cmp::min,
     collections::{HashMap, HashSet},
-    fs,
+    fs::{self, remove_file},
     path::Path,
     sync::Arc,
 };
@@ -310,57 +311,18 @@ impl Metastore {
         query_id: &String,
         row_limit: Option<i32>,
     ) -> Result<Vec<QueryResultInner>, MetastoreError> {
-        let query = self
-            .queries
-            .get(query_id)
-            .ok_or(MetastoreError::QueryAccessError(Error::new(
-                "Couldn't find a query of given ID",
-            )))?;
+        let result_table_ids = self.get_result_table_ids(query_id)?;
 
-        let result = query
-            .result
-            .as_ref()
-            .ok_or(MetastoreError::QueryResultAccessError(Error::new(
-                "Result for this query is not available",
-            )))?;
-
-        let table_ids = result
+        let api_results = result_table_ids
             .iter()
-            .map(|res| res.table_id.clone())
-            .collect::<Vec<_>>();
-
-        let r = table_ids
-            .iter()
-            .map(|id| {
-                let table = &self.tables.get(id).unwrap().table;
-                let row_count = match row_limit {
-                    Some(limit) => min(table.get_num_rows() as i32, limit),
-                    None => table.get_num_rows() as i32,
-                };
-                QueryResultInner {
-                    row_count: Some(row_count),
-                    columns: Some(
-                        table
-                            .iter_columns()
-                            .map(|column| match &column.data {
-                                ColumnData::INT64(raw) => {
-                                    QueryResultInnerColumnsInner::from(OneOf2::A(
-                                        raw.iter().take(row_count as usize).cloned().collect(),
-                                    ))
-                                }
-                                ColumnData::STR(raw) => {
-                                    QueryResultInnerColumnsInner::from(OneOf2::B(
-                                        raw.iter().take(row_count as usize).cloned().collect(),
-                                    ))
-                                }
-                            })
-                            .collect(),
-                    ),
-                }
+            .filter_map(|table_id| {
+                self.tables
+                    .get(table_id)
+                    .map(|metadata| self.build_single_table_result(&metadata.table, row_limit))
             })
             .collect();
 
-        Ok(r)
+        Ok(api_results)
     }
 
     pub fn get_query_result_flush(
@@ -368,6 +330,25 @@ impl Metastore {
         query_id: &String,
         row_limit: Option<i32>,
     ) -> Result<Vec<QueryResultInner>, MetastoreError> {
+        let result_table_ids = self.get_result_table_ids(query_id)?;
+
+        let api_results = result_table_ids
+            .iter()
+            .filter_map(|table_id| {
+                self.tables
+                    .get(table_id)
+                    .map(|metadata| self.build_single_table_result(&metadata.table, row_limit))
+            })
+            .collect();
+
+        for table_id in result_table_ids {
+            self.flush_table_reference(&table_id, query_id);
+        }
+
+        Ok(api_results)
+    }
+
+    fn get_result_table_ids(&self, query_id: &String) -> Result<Vec<String>, MetastoreError> {
         let query = self
             .queries
             .get(query_id)
@@ -382,49 +363,46 @@ impl Metastore {
                 "Result for this query is not available",
             )))?;
 
-        let table_ids = result
-            .iter()
-            .map(|res| res.table_id.clone())
-            .collect::<Vec<_>>();
+        Ok(result.iter().map(|res| res.table_id.clone()).collect())
+    }
 
-        let r = table_ids
-            .iter()
-            .map(|id| {
-                let table = &self.tables.get(id).unwrap().table;
-                let row_count = match row_limit {
-                    Some(limit) => min(table.get_num_rows() as i32, limit),
-                    None => table.get_num_rows() as i32,
-                };
-                QueryResultInner {
-                    row_count: Some(row_count),
-                    columns: Some(
-                        table
-                            .iter_columns()
-                            .map(|column| match &column.data {
-                                ColumnData::INT64(raw) => {
-                                    QueryResultInnerColumnsInner::from(OneOf2::A(
-                                        raw.iter().take(row_count as usize).cloned().collect(),
-                                    ))
-                                }
-                                ColumnData::STR(raw) => {
-                                    QueryResultInnerColumnsInner::from(OneOf2::B(
-                                        raw.iter().take(row_count as usize).cloned().collect(),
-                                    ))
-                                }
-                            })
-                            .collect(),
-                    ),
-                }
+    fn build_single_table_result(&self, table: &Table, row_limit: Option<i32>) -> QueryResultInner {
+        let total_rows = table.get_num_rows() as i32;
+        let limit = row_limit.unwrap_or(total_rows);
+        let row_count = min(total_rows, limit);
+
+        let columns = table
+            .iter_columns()
+            .map(|column| match &column.data {
+                ColumnData::INT64(raw) => QueryResultInnerColumnsInner::from(OneOf2::A(
+                    raw.iter().take(row_count as usize).cloned().collect(),
+                )),
+                ColumnData::STR(raw) => QueryResultInnerColumnsInner::from(OneOf2::B(
+                    raw.iter().take(row_count as usize).cloned().collect(),
+                )),
             })
             .collect();
 
-        table_ids.iter().for_each(|id| {
-            if let Some(set) = self.table_accesses.get_mut(id) {
-                set.remove(query_id);
-            }
-        });
+        QueryResultInner {
+            row_count: Some(row_count),
+            columns: Some(columns),
+        }
+    }
 
-        Ok(r)
+    fn flush_table_reference(&mut self, table_id: &String, query_id: &String) {
+        if let Some(access_set) = self.table_accesses.get_mut(table_id) {
+            access_set.remove(query_id);
+
+            if access_set.is_empty() {
+                if let Some(metadata) = self.tables.remove(table_id) {
+                    if let Err(e) = remove_file(&metadata.table_file) {
+                        warn!("Failed to delete table file {}: {}", metadata.table_file, e);
+                    }
+                }
+            }
+
+            self.table_accesses.remove(table_id);
+        }
     }
 
     pub fn get_query_error(&self, id: &String) -> Result<Vec<QueryError>, MetastoreError> {
