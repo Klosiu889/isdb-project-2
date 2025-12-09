@@ -30,6 +30,11 @@ struct TableMetaData {
     table_file: String,
 }
 
+pub struct ShallowTable {
+    pub(crate) id: String,
+    pub(crate) name: String,
+}
+
 #[derive(Debug)]
 pub struct Error {
     pub(crate) message: String,
@@ -85,13 +90,13 @@ impl Metastore {
         }
     }
 
-    pub fn get_tables(&self) -> Vec<ShallowTable> {
+    pub fn get_shallow_tables(&self) -> Vec<ShallowTable> {
         self.tables
             .iter()
             .filter(|(id, _)| !self.scheduled_for_deletion.contains(*id))
             .map(|(id, metadata)| ShallowTable {
-                table_id: Some(id.clone()),
-                name: metadata.name.to_string(),
+                id: id.clone(),
+                name: metadata.name.clone(),
             })
             .collect()
     }

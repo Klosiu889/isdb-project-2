@@ -9,7 +9,7 @@ use hyper::service::Service;
 use hyper_util::rt::TokioIo;
 use log::info;
 use openapi_client::models::{
-    ExecuteQueryRequest, MultipleProblemsError, MultipleProblemsErrorProblemsInner,
+    ExecuteQueryRequest, MultipleProblemsError, MultipleProblemsErrorProblemsInner, ShallowTable,
     SystemInformation, TableSchema,
 };
 use openapi_client::server::MakeService;
@@ -165,9 +165,18 @@ where
 {
     /// Get list of tables with their accompanying IDs. Use those IDs to get details by calling /table endpoint.
     async fn get_tables(&self, _: &C) -> Result<GetTablesResponse, ApiError> {
-        Ok(GetTablesResponse::ArrayOfTablesInDatabase(
-            self.metastore.read().await.get_tables(),
-        ))
+        info!("API: get_tables | Starting processing");
+
+        let shallow_tables = self.metastore.read().await.get_shallow_tables();
+        let result_tables = shallow_tables
+            .iter()
+            .map(|table| ShallowTable {
+                table_id: Some(table.id.clone()),
+                name: table.name.clone(),
+            })
+            .collect();
+        info!("API: get_tables | Success | Tables: {:?}", result_tables);
+        Ok(GetTablesResponse::ArrayOfTablesInDatabase(result_tables))
     }
 
     /// Get detailed description of selected table
