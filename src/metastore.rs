@@ -418,6 +418,10 @@ impl Metastore {
         self.queries.get_mut(id)
     }
 
+    pub fn get_table_internal(&self, table_id: &String) -> Option<&Table> {
+        self.tables.get(table_id).map(|metadata| &metadata.table)
+    }
+
     pub fn get_table_internal_mut(&mut self, table_id: &String) -> Option<&mut Table> {
         self.tables
             .get_mut(table_id)

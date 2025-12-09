@@ -1,12 +1,12 @@
-use std::fs::File;
+use log::{error, info};
+use std::{collections::HashMap, fs::File};
 
 use csv::ReaderBuilder;
-use lib::Column;
 
 use crate::{
     metastore::SharedMetastore,
     planner::PhysicalPlan,
-    query::{QueryResult, QueryStatus},
+    query::{QueryError, QueryResult, QueryStatus},
 };
 
 #[derive(Clone)]
@@ -23,21 +23,34 @@ impl Executor {
         plan: PhysicalPlan,
         metastore: &SharedMetastore,
     ) {
-        match plan {
+        if let Err(e) = self
+            .set_status(query_id, QueryStatus::Running, metastore)
+            .await
+        {
+            error!("Failed to start query {}: {:?}", query_id, e);
+            self.fail_query(
+                query_id,
+                "Query was deleted before execution".to_string(),
+                metastore,
+            )
+            .await;
+            return;
+        }
+
+        let result = match plan {
             PhysicalPlan::SelectAll { table_id } => {
                 self.select_all(query_id, table_id, metastore).await
             }
             PhysicalPlan::CopyFromCsv {
                 table_id,
-                table_name,
                 file_path,
                 mapping,
                 have_headers,
+                ..
             } => {
                 self.copy_from_csv(
                     query_id,
                     table_id,
-                    table_name,
                     file_path,
                     mapping,
                     have_headers,
@@ -45,89 +58,218 @@ impl Executor {
                 )
                 .await
             }
-        }
+        };
+
+        match result {
+            Ok(query_result) => {
+                self.complete_query(query_id, query_result, metastore).await;
+            }
+            Err(e) => {
+                self.fail_query(query_id, e, metastore).await;
+            }
+        };
     }
 
-    async fn select_all(&self, query_id: &String, table_id: String, metastore: &SharedMetastore) {
-        {
-            let mut metastore_guard = metastore.write().await;
-            let query = metastore_guard.get_query_internal_mut(query_id).unwrap();
-            query.status = QueryStatus::Running;
-        }
-
-        {
-            let mut metastore_guard = metastore.write().await;
-            let query = metastore_guard.get_query_internal_mut(query_id).unwrap();
-            query.status = QueryStatus::Completed;
-            query.result = Some(vec![QueryResult { table_id }])
-        }
+    async fn select_all(
+        &self,
+        _: &String,
+        table_id: String,
+        _: &SharedMetastore,
+    ) -> Result<Option<Vec<QueryResult>>, String> {
+        Ok(Some(vec![QueryResult { table_id }]))
     }
 
     async fn copy_from_csv(
         &self,
-        query_id: &String,
+        _: &String,
         table_id: String,
-        _: String,
         file_path: String,
         mapping: Option<Vec<String>>,
         has_headers: bool,
         metastore: &SharedMetastore,
-    ) {
-        let file = File::open(file_path).unwrap();
-        let mut metastore_guard = metastore.write().await;
-        let query = metastore_guard.get_query_internal_mut(query_id).unwrap();
-        query.status = QueryStatus::Running;
-        let table = metastore_guard.get_table_internal_mut(&table_id).unwrap();
+    ) -> Result<Option<Vec<QueryResult>>, String> {
+        let file = File::open(&file_path)
+            .map_err(|e| format!("Failed to open file '{}': {}", file_path, e))?;
         let mut rdr = ReaderBuilder::new()
             .has_headers(has_headers)
             .from_reader(file);
-
         let records = rdr
             .records()
-            .map(|r| {
-                r.unwrap()
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-            })
-            .collect::<Vec<Vec<String>>>();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("CSV Parse Error: {}", e))?
+            .into_iter()
+            .map(|r| r.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
 
-        let num_cols = table.columns.len();
-        let num_rows = records.len() as u64;
-        table.num_rows = num_rows;
+        let (mut shadow_columns, original_column_names) = {
+            let metastore_guard = metastore.read().await;
+            let table = metastore_guard
+                .get_table_internal(&table_id)
+                .ok_or_else(|| format!("Table {} not found during execution", table_id))?;
 
-        let names = match mapping {
-            Some(val) => val.clone(),
-            None => table.iter_columns().map(|col| col.name.clone()).collect(),
+            (
+                table
+                    .iter_columns()
+                    .map(|column| match column.data {
+                        lib::ColumnData::STR(_) => (
+                            column.name.clone(),
+                            lib::ColumnData::STR(Vec::with_capacity(records.len())),
+                        ),
+                        lib::ColumnData::INT64(_) => (
+                            column.name.clone(),
+                            lib::ColumnData::INT64(Vec::with_capacity(records.len())),
+                        ),
+                    })
+                    .collect::<HashMap<_, _>>(),
+                table
+                    .iter_columns()
+                    .map(|column| column.name.clone())
+                    .collect(),
+            )
         };
-        let mut columns = Vec::<Column>::new();
-        for col_idx in 0..num_cols {
-            let name = names[col_idx].clone();
-            let mut as_int = Vec::new();
-            let mut as_str = Vec::new();
-            let mut all_int = true;
 
-            for row in &records {
-                let value = &row[col_idx];
-                if value.trim().is_empty() {
-                    as_int.push(0);
-                    as_str.push(value.clone());
-                } else if let Ok(v) = value.parse::<i64>() {
-                    as_int.push(v);
-                    as_str.push(value.clone());
-                } else {
-                    all_int = false;
-                    as_str.push(value.clone());
+        let csv_width = records[0].len();
+        let num_rows = records.len() as u64;
+
+        let csv_to_table_map: Vec<String> = match mapping {
+            Some(map_names) => {
+                if map_names.len() != shadow_columns.len() {
+                    return Err(format!(
+                        "Invalid Mapping: You provided {} columns, but target table has {}. Mapping must describe every column in the target table.",
+                        map_names.len(),
+                        shadow_columns.len()
+                    ));
                 }
+                if csv_width < map_names.len() {
+                    return Err(format!(
+                        "CSV too narrow: Mapping requires {} columns, but CSV only has {}.",
+                        map_names.len(),
+                        csv_width
+                    ));
+                }
+
+                for name in &map_names {
+                    if !shadow_columns.contains_key(name) {
+                        return Err(format!(
+                            "Mapping references column '{}', which does not exist in table",
+                            name
+                        ));
+                    }
+                }
+                map_names
+            }
+            None => {
+                if csv_width != shadow_columns.len() {
+                    return Err(format!(
+                        "Mismatch: Table has {} columns, but CSV has {}. Without mapping, counts must match exactly.",
+                        shadow_columns.len(),
+                        csv_width
+                    ));
+                }
+
+                original_column_names
+            }
+        };
+
+        for (row_idx, record) in records.iter().enumerate() {
+            if record.len() != csv_width {
+                return Err(format!("Row {} length mismatch", row_idx + 1));
             }
 
-            if all_int {
-                columns.push(Column::new_int_col(name, as_int));
-            } else {
-                columns.push(Column::new_str_col(name, as_str));
+            for (i, col_name) in csv_to_table_map.iter().enumerate() {
+                let raw_val = &record[i];
+
+                // We use unwrap() safely because we validated keys exist above
+                let column_data = shadow_columns.get_mut(col_name).unwrap();
+
+                match column_data {
+                    lib::ColumnData::INT64(vec) => {
+                        let val = raw_val.trim().parse::<i64>().map_err(|_| {
+                            format!(
+                                "Type Error at Row {}, Column '{}': Expected INT64, got '{}'",
+                                row_idx + 1,
+                                col_name,
+                                raw_val
+                            )
+                        })?;
+                        vec.push(val);
+                    }
+                    lib::ColumnData::STR(vec) => {
+                        vec.push(raw_val.clone());
+                    }
+                }
             }
         }
 
-        table.columns = columns;
+        {
+            let mut metastore_guard = metastore.write().await;
+            let table = metastore_guard
+                .get_table_internal_mut(&table_id)
+                .ok_or_else(|| format!("Table {} deleted during copy", table_id))?;
+
+            for col in &mut table.columns {
+                let new_data = shadow_columns
+                    .remove(&col.name)
+                    .unwrap_or_else(|| match col.data {
+                        lib::ColumnData::INT64(_) => {
+                            let mut vec = Vec::new();
+                            vec.resize(num_rows as usize, 0i64);
+                            lib::ColumnData::INT64(vec)
+                        }
+                        lib::ColumnData::STR(_) => {
+                            let mut vec = Vec::new();
+                            vec.resize(num_rows as usize, "".to_string());
+                            lib::ColumnData::STR(vec)
+                        }
+                    });
+
+                col.data = new_data;
+            }
+
+            table.num_rows = num_rows;
+        }
+
+        Ok(None)
+    }
+
+    async fn set_status(
+        &self,
+        query_id: &String,
+        status: QueryStatus,
+        metastore: &SharedMetastore,
+    ) -> Result<(), ()> {
+        let mut metastore_guard = metastore.write().await;
+        if let Some(q) = metastore_guard.get_query_internal_mut(query_id) {
+            q.status = status;
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    async fn complete_query(
+        &self,
+        query_id: &String,
+        result: Option<Vec<QueryResult>>,
+        metastore: &SharedMetastore,
+    ) {
+        let mut metastore_guard = metastore.write().await;
+        if let Some(q) = metastore_guard.get_query_internal_mut(query_id) {
+            q.status = QueryStatus::Completed;
+            q.result = result;
+            info!("Query {} completed successfully", query_id);
+        }
+    }
+
+    async fn fail_query(&self, query_id: &String, error_msg: String, metastore: &SharedMetastore) {
+        let mut metastore_guard = metastore.write().await;
+        if let Some(q) = metastore_guard.get_query_internal_mut(query_id) {
+            q.status = QueryStatus::Failed;
+            q.errors = Some(vec![QueryError {
+                message: error_msg.clone(),
+                context: None,
+            }]);
+            error!("Query {} failed: {}", query_id, error_msg);
+        }
     }
 }

@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 use crate::{executor::Executor, metastore::SharedMetastore, planner::Planner};
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct SelectQuery {
     pub table_id: String,
     pub table_name: String,
@@ -105,6 +105,10 @@ impl QueryEngine {
 
     async fn process_query(&self, query_id: &String) {
         let plan = self.planner.plan(query_id, &self.metastore).await;
-        self.executor.execute(query_id, plan, &self.metastore).await;
+        if let Some(successfull_plan) = plan {
+            self.executor
+                .execute(query_id, successfull_plan, &self.metastore)
+                .await;
+        }
     }
 }
