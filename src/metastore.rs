@@ -11,7 +11,7 @@ use lib::{Column, ColumnData, Serializer as TableSerializer, Table};
 use openapi_client::models::{
     Column as OpenapiColumn, CopyQuery, LogicalColumnType, Query as OpenapiQuery,
     QueryQueryDefinition, QueryResultInner, QueryResultInnerColumnsInner, SelectQuery,
-    ShallowQuery, TableSchema,
+    ShallowQuery, ShallowTable, TableSchema,
 };
 use serde::{Deserialize, Serialize};
 use swagger::OneOf2;
@@ -28,11 +28,6 @@ struct TableMetaData {
     #[serde(skip)]
     table: Table,
     table_file: String,
-}
-
-pub struct ShallowTable {
-    pub(crate) id: String,
-    pub(crate) name: String,
 }
 
 #[derive(Debug)]
@@ -95,7 +90,7 @@ impl Metastore {
             .iter()
             .filter(|(id, _)| !self.scheduled_for_deletion.contains(*id))
             .map(|(id, metadata)| ShallowTable {
-                id: id.clone(),
+                table_id: Some(id.clone()),
                 name: metadata.name.clone(),
             })
             .collect()

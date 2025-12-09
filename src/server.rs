@@ -9,7 +9,7 @@ use hyper::service::Service;
 use hyper_util::rt::TokioIo;
 use log::{info, warn};
 use openapi_client::models::{
-    ExecuteQueryRequest, MultipleProblemsError, MultipleProblemsErrorProblemsInner, ShallowTable,
+    ExecuteQueryRequest, MultipleProblemsError, MultipleProblemsErrorProblemsInner,
     SystemInformation, TableSchema,
 };
 use openapi_client::server::MakeService;
@@ -168,15 +168,8 @@ where
         info!("API: get_tables | Starting processing");
 
         let shallow_tables = self.metastore.read().await.get_shallow_tables();
-        let result_tables = shallow_tables
-            .iter()
-            .map(|table| ShallowTable {
-                table_id: Some(table.id.clone()),
-                name: table.name.clone(),
-            })
-            .collect();
-        info!("API: get_tables | Success | Tables: {:?}", result_tables);
-        Ok(GetTablesResponse::ArrayOfTablesInDatabase(result_tables))
+        info!("API: get_tables | Success | Tables: {:?}", shallow_tables);
+        Ok(GetTablesResponse::ArrayOfTablesInDatabase(shallow_tables))
     }
 
     /// Get detailed description of selected table
