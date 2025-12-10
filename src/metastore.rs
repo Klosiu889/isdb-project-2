@@ -380,7 +380,7 @@ impl Metastore {
         }
     }
 
-    fn flush_table_reference(&mut self, table_id: &String, query_id: &String) {
+    pub fn flush_table_reference(&mut self, table_id: &String, query_id: &String) {
         if let Some(access_set) = self.table_accesses.get_mut(table_id) {
             access_set.remove(query_id);
 
@@ -390,9 +390,9 @@ impl Metastore {
                         warn!("Failed to delete table file {}: {}", metadata.table_file, e);
                     }
                 }
-            }
 
-            self.table_accesses.remove(table_id);
+                self.table_accesses.remove(table_id);
+            }
         }
     }
 

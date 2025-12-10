@@ -6,7 +6,7 @@ use csv::ReaderBuilder;
 use crate::{
     metastore::{SharedMetastore, TableMetaData},
     planner::PhysicalPlan,
-    query::{QueryError, QueryResult, QueryStatus},
+    query::{QueryDefinition, QueryError, QueryResult, QueryStatus},
     utils::convert_to_table_file_table,
 };
 
@@ -49,16 +49,22 @@ impl Executor {
                 mapping,
                 have_headers,
             } => {
-                self.copy_from_csv(
-                    query_id,
-                    table_id,
-                    table_name,
-                    file_path,
-                    mapping,
-                    have_headers,
-                    metastore,
-                )
-                .await
+                let res = self
+                    .copy_from_csv(
+                        query_id,
+                        table_id.clone(),
+                        table_name,
+                        file_path,
+                        mapping,
+                        have_headers,
+                        metastore,
+                    )
+                    .await;
+                metastore
+                    .write()
+                    .await
+                    .flush_table_reference(&table_id, query_id);
+                res
             }
         };
 
@@ -83,7 +89,7 @@ impl Executor {
 
     async fn copy_from_csv(
         &self,
-        _: &String,
+        query_id: &String,
         table_id: String,
         table_name: String,
         file_path: String,
@@ -208,7 +214,11 @@ impl Executor {
             let mut metastore_guard = metastore.write().await;
             let active_readers: Vec<String> =
                 if let Some(readers) = metastore_guard.table_accesses.get(&table_id) {
-                    readers.iter().cloned().collect()
+                    readers
+                        .iter()
+                        .filter(|&id| *id != *query_id)
+                        .cloned()
+                        .collect()
                 } else {
                     Vec::new()
                 };
@@ -244,6 +254,18 @@ impl Executor {
                                 }
                             }
                         }
+
+                        if let QueryDefinition::Select(select) = &mut query.definition {
+                            if select.table_id == table_id {
+                                select.table_id = snapshot_id.clone();
+                            }
+                        }
+
+                        if let QueryDefinition::Copy(copy) = &mut query.definition {
+                            if copy.table_id == table_id {
+                                copy.table_id = snapshot_id.clone();
+                            }
+                        }
                     }
 
                     metastore_guard
@@ -254,6 +276,9 @@ impl Executor {
                 }
 
                 metastore_guard.table_accesses.remove(&table_id);
+                metastore_guard
+                    .scheduled_for_deletion
+                    .insert(snapshot_id.clone());
             }
         }
 
