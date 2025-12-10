@@ -18,17 +18,17 @@ use serde::{Deserialize, Serialize};
 use swagger::OneOf2;
 use tokio::sync::RwLock;
 
-use crate::query::{self, Query, QueryDefinition, QueryError, QueryStatus};
-
-const TABLES_DIR: &str = "tables";
-const FILE_EXTENSION: &str = "isdb";
+use crate::{
+    query::{self, Query, QueryDefinition, QueryError, QueryStatus},
+    utils::convert_to_table_file_table,
+};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-struct TableMetaData {
-    name: String,
+pub struct TableMetaData {
+    pub(crate) name: String,
     #[serde(skip)]
-    table: Table,
-    table_file: String,
+    pub(crate) table: Table,
+    pub(crate) table_file: String,
 }
 
 #[derive(Debug)]
@@ -66,12 +66,11 @@ pub enum MetastoreError {
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Metastore {
-    scheduled_for_deletion: HashSet<String>,
-    tables: HashMap<String, TableMetaData>,
-    tables_name_id: HashMap<String, String>,
-    table_accesses: HashMap<String, HashSet<String>>,
-    queries: HashMap<String, Query>,
-    results: HashMap<String, String>,
+    pub(crate) scheduled_for_deletion: HashSet<String>,
+    pub(crate) tables: HashMap<String, TableMetaData>,
+    pub(crate) tables_name_id: HashMap<String, String>,
+    pub(crate) table_accesses: HashMap<String, HashSet<String>>,
+    pub(crate) queries: HashMap<String, Query>,
 }
 
 impl Metastore {
@@ -82,7 +81,6 @@ impl Metastore {
             tables_name_id: HashMap::new(),
             table_accesses: HashMap::new(),
             queries: HashMap::new(),
-            results: HashMap::new(),
         }
     }
 
@@ -183,7 +181,7 @@ impl Metastore {
         let metadata = TableMetaData {
             name: table_schema.name.clone(),
             table,
-            table_file: format!("{}/{}.{}", TABLES_DIR, table_id, FILE_EXTENSION),
+            table_file: convert_to_table_file_table(&table_id),
         };
         self.tables.insert(table_id.clone(), metadata);
         self.tables_name_id
@@ -206,7 +204,7 @@ impl Metastore {
         let query = self.queries.get(id).map(|query| OpenapiQuery {
             query_id: id.clone(),
             status: query.status.clone().into(),
-            is_result_available: Some(self.results.contains_key(id)),
+            is_result_available: Some(query.result.is_some()),
             query_definition: match &query.definition {
                 QueryDefinition::Select(val) => {
                     Some(QueryQueryDefinition::from(OneOf2::A(SelectQuery {

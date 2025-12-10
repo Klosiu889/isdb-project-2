@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
+use crate::consts::{AUTHOR, INTERFACE_VERSION, SERVER_VERSION};
 use crate::metastore::{self, Metastore, MetastoreError, SharedMetastore};
 use crate::query::QueryEngine;
 use hyper::server::conn::http1;
@@ -122,10 +123,6 @@ pub async fn create(addr: &str, https: bool, metastore: SharedMetastore) {
         }
     }
 }
-
-const SERVER_VERSION: &str = "1.0.0";
-const INTERFACE_VERSION: &str = "1.0.0";
-const AUTHOR: &str = "Jakub Kłos";
 
 #[derive(Clone)]
 pub struct Server {

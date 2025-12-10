@@ -11,6 +11,7 @@ pub enum PhysicalPlan {
     },
     CopyFromCsv {
         table_id: String,
+        table_name: String,
         file_path: String,
         mapping: Option<Vec<String>>,
         have_headers: bool,
@@ -54,6 +55,7 @@ impl Planner {
             QueryDefinition::Copy(copy) => {
                 self.copy_from_csv(
                     copy.table_id,
+                    copy.table_name,
                     copy.source_filepath,
                     copy.destination_columns,
                     copy.does_csv_contain_header,
@@ -83,6 +85,7 @@ impl Planner {
     async fn copy_from_csv(
         &self,
         table_id: String,
+        table_name: String,
         file_path: String,
         mapping: Option<Vec<String>>,
         have_headers: bool,
@@ -108,6 +111,7 @@ impl Planner {
 
         Ok(PhysicalPlan::CopyFromCsv {
             table_id,
+            table_name,
             file_path,
             mapping,
             have_headers,

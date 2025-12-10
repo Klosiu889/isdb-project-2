@@ -2,14 +2,17 @@ use clap::{Arg, Command};
 use lib::Serializer;
 use tokio::signal;
 
-use crate::metastore::{load_metastore, save_metastore};
+use crate::{
+    consts::METASTORE_FILE,
+    metastore::{load_metastore, save_metastore},
+};
+mod consts;
 mod executor;
 mod metastore;
 mod planner;
 mod query;
 mod server;
-
-const METASTORE_FILE: &str = "metastore.json";
+mod utils;
 
 #[tokio::main]
 async fn main() {

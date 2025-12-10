@@ -4,9 +4,10 @@ use std::{collections::HashMap, fs::File};
 use csv::ReaderBuilder;
 
 use crate::{
-    metastore::SharedMetastore,
+    metastore::{SharedMetastore, TableMetaData},
     planner::PhysicalPlan,
     query::{QueryError, QueryResult, QueryStatus},
+    utils::convert_to_table_file_table,
 };
 
 #[derive(Clone)]
@@ -43,14 +44,15 @@ impl Executor {
             }
             PhysicalPlan::CopyFromCsv {
                 table_id,
+                table_name,
                 file_path,
                 mapping,
                 have_headers,
-                ..
             } => {
                 self.copy_from_csv(
                     query_id,
                     table_id,
+                    table_name,
                     file_path,
                     mapping,
                     have_headers,
@@ -83,6 +85,7 @@ impl Executor {
         &self,
         _: &String,
         table_id: String,
+        table_name: String,
         file_path: String,
         mapping: Option<Vec<String>>,
         has_headers: bool,
@@ -198,6 +201,59 @@ impl Executor {
                         vec.push(raw_val.clone());
                     }
                 }
+            }
+        }
+
+        {
+            let mut metastore_guard = metastore.write().await;
+            let active_readers: Vec<String> =
+                if let Some(readers) = metastore_guard.table_accesses.get(&table_id) {
+                    readers.iter().cloned().collect()
+                } else {
+                    Vec::new()
+                };
+
+            if !active_readers.is_empty() {
+                info!(
+                    "COPY: Table {} has {} active readers. Creating snapshot.",
+                    table_id,
+                    active_readers.len()
+                );
+
+                let current_table = metastore_guard
+                    .get_table_internal(&table_id)
+                    .ok_or_else(|| format!("Table {} not found", table_id))?;
+
+                let snapshot_id = uuid::Uuid::new_v4().to_string();
+                let snapshot_metadata = TableMetaData {
+                    name: table_name,
+                    table: current_table.clone(),
+                    table_file: convert_to_table_file_table(&snapshot_id),
+                };
+
+                metastore_guard
+                    .tables
+                    .insert(snapshot_id.clone(), snapshot_metadata);
+
+                for reader_query_id in active_readers {
+                    if let Some(query) = metastore_guard.queries.get_mut(&reader_query_id) {
+                        if let Some(results) = &mut query.result {
+                            for res in results {
+                                if res.table_id == table_id {
+                                    res.table_id = snapshot_id.clone();
+                                }
+                            }
+                        }
+                    }
+
+                    metastore_guard
+                        .table_accesses
+                        .entry(snapshot_id.clone())
+                        .or_default()
+                        .insert(reader_query_id);
+                }
+
+                metastore_guard.table_accesses.remove(&table_id);
             }
         }
 
