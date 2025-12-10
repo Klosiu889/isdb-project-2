@@ -38,10 +38,31 @@ async fn main() {
         metastore.clone(),
     ));
 
-    signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
+    let shutdown_signal = async {
+        let ctrl_c = signal::ctrl_c();
+
+        #[cfg(unix)]
+        let sigterm = async {
+            signal::unix::signal(signal::unix::SignalKind::terminate())
+                .expect("failed to install signal handler")
+                .recv()
+                .await
+        };
+
+        #[cfg(not(unix))]
+        let sigterm = std::future::pending::<()>();
+
+        tokio::select! {
+            _ = ctrl_c => println!("Received Ctrl+C (SIGINT)"),
+            _ = sigterm => println!("Received Docker Stop (SIGTERM)"),
+        }
+    };
+
+    shutdown_signal.await;
 
     println!("Shutting down server, saving metastore...");
     save_metastore(metastore, METASTORE_FILE, &serializer).await;
 
     server_handler.abort();
+    println!("Server Stopped.");
 }
