@@ -1,14 +1,13 @@
 import requests
 from config import BASE_URL
+from utils import create_dummy_table
 
 
 def test_delete_table(server):
-    data = {"name": "test_delete_table", "columns": []}
-    resp = requests.put(f"{BASE_URL}/table", json=data)
-    assert resp.status_code == 200
-    id = resp.json()
+    table_name = "test_delete_table"
+    (table_id, _) = create_dummy_table(table_name)
 
-    resp = requests.delete(f"{BASE_URL}/table/{id}")
+    resp = requests.delete(f"{BASE_URL}/table/{table_id}")
     assert resp.status_code == 200
 
 

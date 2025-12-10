@@ -22,8 +22,8 @@ def test_get_query_select(server):
 
 
 def test_get_non_existence_query(server):
-    queryid = "test_get_non_existence_query"
-    resp = requests.get(f"{BASE_URL}/query/{queryid}")
+    query_id = "test_get_non_existence_query"
+    resp = requests.get(f"{BASE_URL}/query/{query_id}")
     assert resp.status_code == 404
 
     body = resp.json()
