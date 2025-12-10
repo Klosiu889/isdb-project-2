@@ -1,10 +1,12 @@
-import requests
 import time
 
+import requests
+from config import BASE_URL
 
-def test_system_info(server, base_url):
+
+def test_system_info(server):
     time.sleep(1)
-    resp = requests.get(f"{base_url}/system/info")
+    resp = requests.get(f"{BASE_URL}/system/info")
     assert resp.status_code == 200
 
     body = resp.json()
