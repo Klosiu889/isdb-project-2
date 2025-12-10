@@ -1,1 +1,15 @@
+target
 openapi
+.venv
+
+.git
+.gitignore
+
+pytests
+tests
+
+tables/
+*.isdb
+metastore.json
+data/
+*.log
