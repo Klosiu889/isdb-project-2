@@ -60,10 +60,10 @@ impl Executor {
                         metastore,
                     )
                     .await;
-                metastore
-                    .write()
-                    .await
-                    .flush_table_reference(&table_id, query_id);
+                if let Some(access_set) = metastore.write().await.table_accesses.get_mut(&table_id)
+                {
+                    access_set.remove(query_id);
+                }
                 res
             }
         };
