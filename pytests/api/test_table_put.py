@@ -55,7 +55,7 @@ def test_put_table_with_duplicate_column_names(server, base_url):
     body = resp.json()
     assert body["problems"] == [{
         "error": "Two columns have identical names",
-        "context": "Name: col1",
+        "context": "col1",
     }]
 
 
@@ -104,14 +104,14 @@ def test_put_table_with_multiple_errors(server, base_url):
         {'error': 'Table with given name already exists'},
         {
             "error": "Two columns have identical names",
-            "context": "Name: col1",
+            "context": "col1",
         },
         {
             "error": "Two columns have identical names",
-            "context": "Name: col2",
+            "context": "col2",
         },
         {
             "error": "Two columns have identical names",
-            "context": "Name: col3",
+            "context": "col3",
         }
     ], key=lambda x: (x["error"], x.get("context", "")))
