@@ -3,7 +3,7 @@ info:
   title: MIMUW ISBD database system
   description: |-
     This file describes interface between DBMS system and user.
-  version: 1.0.1
+  version: 2.0.0
 tags:
   - name: schema
     description: Endpoints used to access schema structure
@@ -276,7 +276,7 @@ components:
       required:
         - queryId
         - status
-        - queryString
+        - queryDefinition
       properties:
         queryId:
           $ref: "#/components/schemas/QueryID"
@@ -328,12 +328,115 @@ components:
           default: false
 
     SelectQuery:
-      description: Description of a select query (extension in project no 4)
+      description: Description of a select query
       required:
-        - tableName
+        - columnClauses
+      properties:
+        columnClauses:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColumnExpression"
+        whereClause:
+          $ref: "#/components/schemas/WhereExpression"
+        orderByClause:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderByExpression"
+        limitClause:
+          $ref: "#/components/schemas/LimitExpression"
+
+    ColumnExpression:
+      description: Description of a single column expression in SELECT query
+      oneOf:
+        - $ref: "#/components/schemas/ColumnReferenceExpression"
+        - $ref: "#/components/schemas/Literal"
+        - $ref: "#/components/schemas/Function"
+        - $ref: "#/components/schemas/ColumnarBinaryOperation"
+        - $ref: "#/components/schemas/ColumnarUnaryOperation"
+    
+    WhereExpression:
+      description: Description of WHERE clause in SELECT query (just single column expression which should evaluate to boolean type)
+      $ref: "#/components/schemas/ColumnExpression"
+
+    LimitExpression:
+      description: Description of LIMIT clause in SELECT query
+      properties:
+        limit:
+          type: integer
+          format: int32
+
+    OrderByExpression:
+      description: Description of ORDER BY clause in SELECT query
+      properties:
+        columnIndex:
+          description: Index of the column from the columnClauses (0-based). We can Assume that ordering is done only on data that are results of the query.
+          type: integer
+        ascending:
+          type: boolean
+
+    ColumnReferenceExpression:
+      description: Description of a reference to a column used in column expression
       properties:
         tableName:
           type: string
+        columnName:
+          type: string
+
+    Literal:
+      description: Description of a literal value used in column expression
+      properties:
+        value:
+            oneOf:
+              - type: integer
+                format: int64
+              - type: string
+              - type: boolean
+
+    Function:
+      description: Description of a function used in column expression
+      properties:
+        functionName:
+          enum:
+            - STRLEN
+            - CONCAT
+            - UPPER
+            - LOWER
+        arguments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColumnExpression"
+
+    ColumnarBinaryOperation:
+      description: Description of columnar operator used in column expression
+      properties:
+        operator:
+          enum:
+            - ADD
+            - SUBTRACT
+            - MULTIPLY
+            - DIVIDE
+            - AND
+            - OR
+            - EQUAL
+            - NOT_EQUAL
+            - LESS_THAN
+            - LESS_EQUAL
+            - GREATER_THAN
+            - GREATER_EQUAL
+        leftOperand:
+          $ref: "#/components/schemas/ColumnExpression"
+        rightOperand:
+          $ref: "#/components/schemas/ColumnExpression"
+
+    ColumnarUnaryOperation:
+      description: Description of unary Operation
+      properties:
+        operand:
+          $ref: "#/components/schemas/ColumnExpression"
+        operator:
+          enum:
+            - NOT
+            - MINUS
 
     Int64Column:
       description: Column containing INT64 values
@@ -347,6 +450,12 @@ components:
       type: array
       items:
         type: string
+    
+    BooleanColumn:
+      description: Column containing BOOLEAN values
+      type: array
+      items:
+        type: boolean
 
     QueryResult:
       description: Result of a query execution (plain json data)
@@ -365,6 +474,7 @@ components:
               oneOf:
                 - $ref: "#/components/schemas/Int64Column"
                 - $ref: "#/components/schemas/VarcharColumn"
+                - $ref: "#/components/schemas/BooleanColumn"
 
     MultipleProblemsError:
       description: Error containing multiple problems about request processing. Useful when processing complex requests where multiple problems can occur at the same time.
@@ -397,7 +507,7 @@ components:
       description: Basic information about the system
       required:
         - version
-        - uptime
+        - author
       properties:
         interfaceVersion:
           description: Version of the DBMS interface
