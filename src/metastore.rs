@@ -15,7 +15,7 @@ use openapi_client::models::{
     ShallowQuery, ShallowTable, TableSchema,
 };
 use serde::{Deserialize, Serialize};
-use swagger::OneOf2;
+use swagger::{OneOf2, OneOf3};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -207,18 +207,20 @@ impl Metastore {
             is_result_available: Some(query.result.is_some()),
             query_definition: match &query.definition {
                 QueryDefinition::Select(val) => {
-                    Some(QueryQueryDefinition::from(OneOf2::A(SelectQuery {
-                        table_name: val.table_name.clone(),
-                    })))
+                    QueryQueryDefinition::from(OneOf2::A(SelectQuery {
+                        //TODO
+                        column_clauses: vec![],
+                        where_clause: None,
+                        order_by_clause: None,
+                        limit_clause: None,
+                    }))
                 }
-                QueryDefinition::Copy(val) => {
-                    Some(QueryQueryDefinition::from(OneOf2::B(CopyQuery {
-                        source_filepath: val.source_filepath.clone(),
-                        destination_table_name: val.table_name.clone(),
-                        destination_columns: val.destination_columns.clone(),
-                        does_csv_contain_header: Some(val.does_csv_contain_header),
-                    })))
-                }
+                QueryDefinition::Copy(val) => QueryQueryDefinition::from(OneOf2::B(CopyQuery {
+                    source_filepath: val.source_filepath.clone(),
+                    destination_table_name: val.table_name.clone(),
+                    destination_columns: val.destination_columns.clone(),
+                    does_csv_contain_header: Some(val.does_csv_contain_header),
+                })),
             },
         });
 
@@ -231,10 +233,12 @@ impl Metastore {
     }
 
     pub fn create_select_query(&mut self, query: &SelectQuery) -> Result<String, MetastoreError> {
-        let table_id = self.tables_name_id.get(&query.table_name).ok_or(
+        //TODO
+        let table_id = self.tables_name_id.get(&"TODO".to_string()).ok_or(
             MetastoreError::QueryCreationError(vec![Error::with_context(
                 "There is no table with that name",
-                query.table_name.clone(),
+                //TODO
+                "TODO".to_string(),
             )]),
         )?;
 
@@ -249,7 +253,8 @@ impl Metastore {
                 QueryStatus::Created,
                 QueryDefinition::Select(query::SelectQuery {
                     table_id: table_id.clone(),
-                    table_name: query.table_name.clone(),
+                    //TODO
+                    table_name: "TODO".to_string(),
                 }),
             ),
         );
@@ -365,10 +370,10 @@ impl Metastore {
         let columns = table
             .iter_columns()
             .map(|column| match &column.data {
-                ColumnData::INT64(raw) => QueryResultInnerColumnsInner::from(OneOf2::A(
+                ColumnData::INT64(raw) => QueryResultInnerColumnsInner::from(OneOf3::A(
                     raw.iter().take(row_count as usize).cloned().collect(),
                 )),
-                ColumnData::STR(raw) => QueryResultInnerColumnsInner::from(OneOf2::B(
+                ColumnData::STR(raw) => QueryResultInnerColumnsInner::from(OneOf3::B(
                     raw.iter().take(row_count as usize).cloned().collect(),
                 )),
             })

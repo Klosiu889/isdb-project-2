@@ -2,6 +2,7 @@ FROM rust:alpine3.22 as builder
 
 RUN apk add --no-cache \
     bash \
+    sed \
     curl \
     openjdk17-jdk \
     git \
@@ -17,11 +18,12 @@ WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY dbmsInterface.yaml ./
+COPY post_process.sh ./
 
 RUN npm install @openapitools/openapi-generator-cli -g
-RUN openapi-generator-cli generate -i dbmsInterface.yaml -g rust-server -o openapi
-RUN echo "pub type Int64Column = Vec<i64>;" >> openapi/src/models.rs
-RUN	echo "pub type VarcharColumn = Vec<String>;" >> openapi/src/models.rs
+RUN chmod +x post_process.sh
+ENV RUST_POST_PROCESS_FILE="./post_process.sh"
+RUN openapi-generator-cli generate -i dbmsInterface.yaml -g rust-server -o openapi -p generateAliasAsModel=true --enable-post-process-file
 
 RUN cargo build --release || true
 

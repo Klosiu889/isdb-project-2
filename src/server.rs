@@ -10,7 +10,7 @@ use hyper::service::Service;
 use hyper_util::rt::TokioIo;
 use log::{info, warn};
 use openapi_client::models::{
-    ExecuteQueryRequest, MultipleProblemsError, MultipleProblemsErrorProblemsInner,
+    ExecuteQueryRequest, MultipleProblemsError, MultipleProblemsErrorProblemsInner, QueryResult,
     SystemInformation, TableSchema,
 };
 use openapi_client::server::MakeService;
@@ -344,7 +344,9 @@ where
         match result {
             Ok(res) => {
                 info!("API: get_query_result | Success | QueryID: {}", query_id);
-                Ok(GetQueryResultResponse::ResultOfSelectedQuery(res))
+                Ok(GetQueryResultResponse::ResultOfSelectedQuery(
+                    QueryResult::from(res),
+                ))
             }
             Err(MetastoreError::QueryAccessError(error)) => {
                 warn!("API: get_query_result | Failed | Error: {:?}", error);
@@ -401,8 +403,8 @@ where
             SystemInformation {
                 interface_version: Some(self.interface_version.clone()),
                 version: self.version.clone(),
-                author: Some(self.author.clone()),
-                uptime: self.start_time.elapsed().as_secs() as i64,
+                author: self.author.clone(),
+                uptime: Some(self.start_time.elapsed().as_secs() as i64),
             },
         ))
     }
