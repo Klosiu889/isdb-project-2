@@ -1,4 +1,7 @@
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 
 use log::info;
 use openapi_client::models;
@@ -60,6 +63,28 @@ impl From<models::FunctionFunctionName> for FunctionName {
     }
 }
 
+impl FunctionName {
+    pub fn num_arguments(&self) -> usize {
+        match self {
+            Self::Strlen | Self::Upper | Self::Lower => 1,
+            Self::Concat => 2,
+        }
+    }
+
+    pub fn arguments_types(&self) -> Vec<ExpressionType> {
+        match self {
+            Self::Strlen | Self::Upper | Self::Lower => vec![ExpressionType::String],
+            Self::Concat => vec![ExpressionType::String, ExpressionType::String],
+        }
+    }
+
+    pub fn get_type(&self) -> ExpressionType {
+        match self {
+            Self::Strlen | Self::Upper | Self::Lower | Self::Concat => ExpressionType::String,
+        }
+    }
+}
+
 impl From<FunctionName> for models::FunctionFunctionName {
     fn from(value: FunctionName) -> Self {
         match value {
@@ -71,11 +96,13 @@ impl From<FunctionName> for models::FunctionFunctionName {
     }
 }
 
-impl FunctionName {
-    pub fn num_arguments(&self) -> usize {
+impl Display for FunctionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Strlen | Self::Upper | Self::Lower => 1,
-            Self::Concat => 2,
+            Self::Strlen => write!(f, "STRLEN"),
+            Self::Concat => write!(f, "CONCAT"),
+            Self::Upper => write!(f, "UPPER"),
+            Self::Lower => write!(f, "LOWER"),
         }
     }
 }
@@ -113,6 +140,24 @@ pub enum BinOperator {
     LessEqual,
     GreaterThan,
     GreaterEqual,
+}
+
+impl BinOperator {
+    pub fn get_type(&self) -> ExpressionType {
+        match self {
+            Self::Add | Self::Subtract | Self::Multiply | Self::Divide => ExpressionType::I64,
+            _ => ExpressionType::Bool,
+        }
+    }
+    pub fn get_args_types(&self) -> Option<(ExpressionType, ExpressionType)> {
+        match self {
+            Self::Add | Self::Subtract | Self::Multiply | Self::Divide => {
+                Some((ExpressionType::I64, ExpressionType::I64))
+            }
+            Self::And | Self::Or => Some((ExpressionType::Bool, ExpressionType::Bool)),
+            _ => None,
+        }
+    }
 }
 
 impl From<models::ColumnarBinaryOperationOperator> for BinOperator {
@@ -159,6 +204,21 @@ pub enum Operator {
     Minus,
 }
 
+impl Operator {
+    pub fn get_type(&self) -> ExpressionType {
+        match self {
+            Self::Not => ExpressionType::Bool,
+            Self::Minus => ExpressionType::I64,
+        }
+    }
+    pub fn get_argument_type(&self) -> ExpressionType {
+        match self {
+            Self::Not => ExpressionType::Bool,
+            Self::Minus => ExpressionType::I64,
+        }
+    }
+}
+
 impl From<models::ColumnarUnaryOperationOperator> for Operator {
     fn from(value: models::ColumnarUnaryOperationOperator) -> Self {
         match value {
@@ -175,6 +235,13 @@ impl From<Operator> for models::ColumnarUnaryOperationOperator {
             Operator::Minus => Self::Minus,
         }
     }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum ExpressionType {
+    I64,
+    String,
+    Bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -234,6 +301,74 @@ impl ColumnExpression {
                 binary.right_operand.collect_columns_names(acc);
             }
             ColumnExpression::Unary(unary) => unary.operand.collect_columns_names(acc),
+        }
+    }
+
+    pub fn get_type(
+        &self,
+        table_schema: &HashMap<String, ExpressionType>,
+    ) -> Result<ExpressionType, String> {
+        match self {
+            ColumnExpression::Ref(reference) => table_schema
+                .get(&reference.column_name)
+                .cloned()
+                .ok_or("Column not found in schema".to_string()),
+            ColumnExpression::Literal(literal) => match literal {
+                Literal::I64(_) => Ok(ExpressionType::I64),
+                Literal::String(_) => Ok(ExpressionType::String),
+                Literal::Bool(_) => Ok(ExpressionType::Bool),
+            },
+            ColumnExpression::Function(function) => {
+                let arg_types = function
+                    .arguments
+                    .iter()
+                    .map(|arg| arg.get_type(table_schema))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let expected_argument_types = function.name.arguments_types();
+                if arg_types.len() != expected_argument_types.len() {
+                    return Err(format!(
+                        "Wrong number of arguments in function '{}'",
+                        function.name
+                    ));
+                }
+                for (i, arg) in arg_types.iter().enumerate() {
+                    if *arg != expected_argument_types[i] {
+                        return Err(format!(
+                            "Wrong type of arguments in function '{}'",
+                            function.name
+                        ));
+                    }
+                }
+                Ok(function.name.get_type())
+            }
+            ColumnExpression::Binary(binary) => {
+                let left_type = binary.left_operand.get_type(table_schema)?;
+                let right_type = binary.right_operand.get_type(table_schema)?;
+                let operator_types = binary.operator.get_args_types();
+                match operator_types {
+                    Some((left, right)) => {
+                        if left_type != left || right_type != right {
+                            return Err("Wrong types of arguments in binary oparation".to_string());
+                        }
+                    }
+                    None => {
+                        if left_type != right_type {
+                            return Err("Wrong types of arguments in binary oparation".to_string());
+                        }
+                    }
+                }
+                Ok(binary.operator.get_type())
+            }
+            ColumnExpression::Unary(unary) => {
+                let operand_type = unary.operand.get_type(table_schema)?;
+                let operator_type = unary.operator.get_argument_type();
+
+                if operand_type != operator_type {
+                    return Err("Wrong argument type in unary operation".to_string());
+                }
+
+                Ok(unary.operator.get_type())
+            }
         }
     }
 }

@@ -80,17 +80,24 @@ impl Planner {
             .chain(select.where_clause.iter())
             .flat_map(|expr| expr.get_columns_names())
             .collect::<HashSet<_>>();
-        let column_indexes_map = {
+        let (column_indexes_map, column_types_map) = {
             let metastore_guard = metastore.read().await;
             let table = metastore_guard
                 .get_table_internal(&select.table_id)
                 .ok_or("Table was deleted before planning query".to_string())?;
-            table
-                .columns
-                .iter()
-                .enumerate()
-                .map(|(i, col)| (col.name.clone(), i))
-                .collect::<HashMap<_, _>>()
+
+            let mut indexes = HashMap::new();
+            let mut types = HashMap::new();
+            for (i, col) in table.columns.iter().enumerate() {
+                indexes.insert(col.name.clone(), i);
+                let type_ = match col.data {
+                    lib::ColumnData::STR(_) => query::ExpressionType::String,
+                    lib::ColumnData::INT64(_) => query::ExpressionType::I64,
+                };
+                types.insert(col.name.clone(), type_);
+            }
+
+            (indexes, types)
         };
         for name in column_names {
             if !column_indexes_map.contains_key(&name) {
@@ -121,6 +128,7 @@ impl Planner {
 
         let filter_expression = select
             .where_clause
+            .as_ref()
             .map(|expr| {
                 expression_map
                     .get(&expr)
@@ -137,6 +145,17 @@ impl Planner {
                 ));
             }
         }
+
+        for expr in expression_map.keys() {
+            let _ = expr.get_type(&column_types_map)?;
+        }
+        if let Some(clause) = &select.where_clause {
+            let type_ = clause.get_type(&column_types_map)?;
+            if type_ != query::ExpressionType::Bool {
+                return Err("Filter expression must be of type Boolean".to_string());
+            }
+        }
+
         Ok(PhysicalPlan::Select {
             table_id: select.table_id,
             column_indexes_map: column_indexes_map,
