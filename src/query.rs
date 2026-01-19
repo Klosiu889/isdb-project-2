@@ -5,10 +5,111 @@ use tokio::sync::mpsc;
 
 use crate::{executor::Executor, metastore::SharedMetastore, planner::Planner};
 
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub struct ColumnReferenceExpression {
+    pub table_name: String,
+    pub column_name: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub enum Literal {
+    I64(i64),
+    String(String),
+    Bool(bool),
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub enum FunctionName {
+    Strlen,
+    Concat,
+    Upper,
+    Lower,
+}
+
+impl From<models::FunctionFunctionName> for FunctionName {
+    fn from(value: models::FunctionFunctionName) -> Self {
+        match value {
+            models::FunctionFunctionName::Strlen => Self::Strlen,
+            models::FunctionFunctionName::Concat => Self::Concat,
+            models::FunctionFunctionName::Upper => Self::Upper,
+            models::FunctionFunctionName::Lower => Self::Lower,
+        }
+    }
+}
+
+impl FunctionName {
+    pub fn num_arguments(&self) -> usize {
+        match self {
+            Self::Strlen | Self::Upper | Self::Lower => 1,
+            Self::Concat => 2,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub struct Function {
+    pub name: FunctionName,
+    pub arguments: Vec<ColumnExpression>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub struct ColumnarBinaryOperation {
+    pub left_operand: Box<ColumnExpression>,
+    pub right_operand: Box<ColumnExpression>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub struct ColumnarUnaryOperation {
+    pub operand: Box<ColumnExpression>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub enum ColumnExpression {
+    Ref(ColumnReferenceExpression),
+    Literal(Literal),
+    Function(Function),
+    Binary(ColumnarBinaryOperation),
+    Unary(ColumnarUnaryOperation),
+}
+
+impl ColumnExpression {
+    pub fn get_column_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        self.collect_column_names(&mut names);
+        names
+    }
+
+    fn collect_column_names(&self, acc: &mut Vec<String>) {
+        match self {
+            ColumnExpression::Ref(reference) => acc.push(reference.column_name.clone()),
+            ColumnExpression::Literal(_) => {}
+            ColumnExpression::Function(function) => {
+                for arg in &function.arguments {
+                    arg.collect_column_names(acc);
+                }
+            }
+            ColumnExpression::Binary(binary) => {
+                binary.left_operand.collect_column_names(acc);
+                binary.right_operand.collect_column_names(acc);
+            }
+            ColumnExpression::Unary(unary) => unary.operand.collect_column_names(acc),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct OrderByExpression {
+    pub column_index: usize,
+    pub asscending: bool,
+}
+
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct SelectQuery {
     pub table_id: String,
-    pub table_name: String,
+    pub column_clauses: Vec<ColumnExpression>,
+    pub where_clause: Option<ColumnExpression>,
+    pub order_by_clause: Vec<OrderByExpression>,
+    pub limit: Option<i32>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

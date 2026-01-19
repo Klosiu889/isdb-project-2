@@ -39,7 +39,7 @@ impl Executor {
         }
 
         let result = match plan {
-            PhysicalPlan::SelectAll { table_id } => {
+            PhysicalPlan::Select { table_id, .. } => {
                 self.select_all(query_id, table_id, metastore).await
             }
             PhysicalPlan::CopyFromCsv {
