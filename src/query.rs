@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+
 use log::info;
 use openapi_client::models;
 use serde::{Deserialize, Serialize};
+use swagger::{OneOf3, OneOf5};
 use tokio::sync::mpsc;
 
 use crate::{executor::Executor, metastore::SharedMetastore, planner::Planner};
@@ -16,6 +19,26 @@ pub enum Literal {
     I64(i64),
     String(String),
     Bool(bool),
+}
+
+impl From<models::LiteralValue> for Literal {
+    fn from(value: models::LiteralValue) -> Self {
+        match value.into() {
+            OneOf3::A(val) => Self::I64(val),
+            OneOf3::B(val) => Self::String(val),
+            OneOf3::C(val) => Self::Bool(val),
+        }
+    }
+}
+
+impl From<Literal> for models::LiteralValue {
+    fn from(value: Literal) -> Self {
+        match value {
+            Literal::I64(val) => Self::from(OneOf3::A(val)),
+            Literal::String(val) => Self::from(OneOf3::B(val)),
+            Literal::Bool(val) => Self::from(OneOf3::C(val)),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -37,6 +60,17 @@ impl From<models::FunctionFunctionName> for FunctionName {
     }
 }
 
+impl From<FunctionName> for models::FunctionFunctionName {
+    fn from(value: FunctionName) -> Self {
+        match value {
+            FunctionName::Strlen => Self::Strlen,
+            FunctionName::Concat => Self::Concat,
+            FunctionName::Upper => Self::Upper,
+            FunctionName::Lower => Self::Lower,
+        }
+    }
+}
+
 impl FunctionName {
     pub fn num_arguments(&self) -> usize {
         match self {
@@ -54,13 +88,93 @@ pub struct Function {
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct ColumnarBinaryOperation {
+    pub operator: BinOperator,
     pub left_operand: Box<ColumnExpression>,
     pub right_operand: Box<ColumnExpression>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
 pub struct ColumnarUnaryOperation {
+    pub operator: Operator,
     pub operand: Box<ColumnExpression>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub enum BinOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    And,
+    Or,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessEqual,
+    GreaterThan,
+    GreaterEqual,
+}
+
+impl From<models::ColumnarBinaryOperationOperator> for BinOperator {
+    fn from(value: models::ColumnarBinaryOperationOperator) -> Self {
+        match value {
+            models::ColumnarBinaryOperationOperator::Add => Self::Add,
+            models::ColumnarBinaryOperationOperator::Subtract => Self::Subtract,
+            models::ColumnarBinaryOperationOperator::Multiply => Self::Multiply,
+            models::ColumnarBinaryOperationOperator::Divide => Self::Divide,
+            models::ColumnarBinaryOperationOperator::And => Self::And,
+            models::ColumnarBinaryOperationOperator::Or => Self::Or,
+            models::ColumnarBinaryOperationOperator::Equal => Self::Equal,
+            models::ColumnarBinaryOperationOperator::NotEqual => Self::NotEqual,
+            models::ColumnarBinaryOperationOperator::LessThan => Self::LessThan,
+            models::ColumnarBinaryOperationOperator::LessEqual => Self::LessEqual,
+            models::ColumnarBinaryOperationOperator::GreaterThan => Self::GreaterThan,
+            models::ColumnarBinaryOperationOperator::GreaterEqual => Self::GreaterEqual,
+        }
+    }
+}
+
+impl From<BinOperator> for models::ColumnarBinaryOperationOperator {
+    fn from(value: BinOperator) -> Self {
+        match value {
+            BinOperator::Add => Self::Add,
+            BinOperator::Subtract => Self::Subtract,
+            BinOperator::Multiply => Self::Multiply,
+            BinOperator::Divide => Self::Divide,
+            BinOperator::And => Self::And,
+            BinOperator::Or => Self::Or,
+            BinOperator::Equal => Self::Equal,
+            BinOperator::NotEqual => Self::NotEqual,
+            BinOperator::LessThan => Self::LessThan,
+            BinOperator::LessEqual => Self::LessEqual,
+            BinOperator::GreaterThan => Self::GreaterThan,
+            BinOperator::GreaterEqual => Self::GreaterEqual,
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub enum Operator {
+    Not,
+    Minus,
+}
+
+impl From<models::ColumnarUnaryOperationOperator> for Operator {
+    fn from(value: models::ColumnarUnaryOperationOperator) -> Self {
+        match value {
+            models::ColumnarUnaryOperationOperator::Not => Self::Not,
+            models::ColumnarUnaryOperationOperator::Minus => Self::Minus,
+        }
+    }
+}
+
+impl From<Operator> for models::ColumnarUnaryOperationOperator {
+    fn from(value: Operator) -> Self {
+        match value {
+            Operator::Not => Self::Not,
+            Operator::Minus => Self::Minus,
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
@@ -73,27 +187,128 @@ pub enum ColumnExpression {
 }
 
 impl ColumnExpression {
-    pub fn get_column_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        self.collect_column_names(&mut names);
+    pub fn get_tables_names(&self) -> HashSet<String> {
+        let mut names = HashSet::new();
+        self.collect_tables_names(&mut names);
         names
     }
 
-    fn collect_column_names(&self, acc: &mut Vec<String>) {
+    fn collect_tables_names(&self, acc: &mut HashSet<String>) {
         match self {
-            ColumnExpression::Ref(reference) => acc.push(reference.column_name.clone()),
+            ColumnExpression::Ref(reference) => {
+                acc.insert(reference.table_name.clone());
+            }
             ColumnExpression::Literal(_) => {}
             ColumnExpression::Function(function) => {
                 for arg in &function.arguments {
-                    arg.collect_column_names(acc);
+                    arg.collect_tables_names(acc);
                 }
             }
             ColumnExpression::Binary(binary) => {
-                binary.left_operand.collect_column_names(acc);
-                binary.right_operand.collect_column_names(acc);
+                binary.left_operand.collect_tables_names(acc);
+                binary.right_operand.collect_tables_names(acc);
             }
-            ColumnExpression::Unary(unary) => unary.operand.collect_column_names(acc),
+            ColumnExpression::Unary(unary) => unary.operand.collect_tables_names(acc),
         }
+    }
+
+    pub fn get_columns_names(&self) -> HashSet<String> {
+        let mut names = HashSet::new();
+        self.collect_columns_names(&mut names);
+        names
+    }
+
+    fn collect_columns_names(&self, acc: &mut HashSet<String>) {
+        match self {
+            ColumnExpression::Ref(reference) => {
+                acc.insert(reference.column_name.clone());
+            }
+            ColumnExpression::Literal(_) => {}
+            ColumnExpression::Function(function) => {
+                for arg in &function.arguments {
+                    arg.collect_columns_names(acc);
+                }
+            }
+            ColumnExpression::Binary(binary) => {
+                binary.left_operand.collect_columns_names(acc);
+                binary.right_operand.collect_columns_names(acc);
+            }
+            ColumnExpression::Unary(unary) => unary.operand.collect_columns_names(acc),
+        }
+    }
+}
+
+impl TryFrom<models::ColumnExpression> for ColumnExpression {
+    type Error = String;
+
+    fn try_from(value: models::ColumnExpression) -> Result<Self, Self::Error> {
+        match value.into() {
+            OneOf5::A(reference) => Ok(ColumnExpression::Ref(ColumnReferenceExpression {
+                table_name: reference.table_name.ok_or("Missing table name")?,
+                column_name: reference.column_name.ok_or("Missing column name")?,
+            })),
+            OneOf5::B(literal) => Ok(ColumnExpression::Literal(
+                literal.value.ok_or("Missing literal value")?.into(),
+            )),
+            OneOf5::C(function) => Ok(ColumnExpression::Function(Function {
+                name: function
+                    .function_name
+                    .ok_or("Missing function name")?
+                    .into(),
+                arguments: function
+                    .arguments
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(TryInto::try_into)
+                    .collect::<Result<Vec<_>, _>>()?,
+            })),
+            OneOf5::D(binary) => Ok(ColumnExpression::Binary(ColumnarBinaryOperation {
+                operator: binary.operator.ok_or("Missing operator")?.into(),
+                left_operand: Box::new(
+                    (*binary.left_operand.ok_or("Missing left operand")?).try_into()?,
+                ),
+                right_operand: Box::new(
+                    (*binary.right_operand.ok_or("Missing right operand")?).try_into()?,
+                ),
+            })),
+            OneOf5::E(unary) => Ok(ColumnExpression::Unary(ColumnarUnaryOperation {
+                operator: unary.operator.ok_or("Missing operator")?.into(),
+                operand: Box::new((*unary.operand.ok_or("Missing operand")?).try_into()?),
+            })),
+        }
+    }
+}
+
+impl From<ColumnExpression> for models::ColumnExpression {
+    fn from(value: ColumnExpression) -> Self {
+        let one_of_value = match value {
+            ColumnExpression::Ref(reference) => OneOf5::A(models::ColumnReferenceExpression {
+                table_name: Some(reference.table_name),
+                column_name: Some(reference.column_name),
+            }),
+            ColumnExpression::Literal(literal) => OneOf5::B(models::Literal {
+                value: Some(literal.into()),
+            }),
+            ColumnExpression::Function(function) => OneOf5::C(models::Function {
+                function_name: Some(function.name.into()),
+                arguments: if function.arguments.len() == 0 {
+                    None
+                } else {
+                    Some(function.arguments.into_iter().map(Into::into).collect())
+                },
+            }),
+            ColumnExpression::Binary(binary) => OneOf5::D(models::ColumnarBinaryOperation {
+                operator: Some(binary.operator.into()),
+                left_operand: Some(Box::new((*binary.left_operand).into())),
+                right_operand: Some(Box::new((*binary.right_operand).into())),
+            }),
+            ColumnExpression::Unary(unary) => OneOf5::E(models::ColumnarUnaryOperation {
+                operator: Some(unary.operator.into()),
+                operand: Some(Box::new((*unary.operand).into())),
+            }),
+        };
+
+        Self::from(one_of_value)
     }
 }
 
@@ -101,6 +316,26 @@ impl ColumnExpression {
 pub struct OrderByExpression {
     pub column_index: usize,
     pub asscending: bool,
+}
+
+impl TryFrom<models::OrderByExpression> for OrderByExpression {
+    type Error = String;
+
+    fn try_from(value: models::OrderByExpression) -> Result<Self, Self::Error> {
+        Ok(Self {
+            column_index: value.column_index.ok_or("Missing column index")? as usize,
+            asscending: value.ascending.unwrap_or(false),
+        })
+    }
+}
+
+impl From<OrderByExpression> for models::OrderByExpression {
+    fn from(value: OrderByExpression) -> Self {
+        Self {
+            column_index: Some(value.column_index as i32),
+            ascending: Some(value.asscending),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -133,11 +368,11 @@ pub enum QueryStatus {
 impl From<QueryStatus> for models::QueryStatus {
     fn from(value: QueryStatus) -> Self {
         match value {
-            QueryStatus::Created => models::QueryStatus::Created,
-            QueryStatus::Planning => models::QueryStatus::Planning,
-            QueryStatus::Running => models::QueryStatus::Running,
-            QueryStatus::Completed => models::QueryStatus::Completed,
-            QueryStatus::Failed => models::QueryStatus::Failed,
+            QueryStatus::Created => Self::Created,
+            QueryStatus::Planning => Self::Planning,
+            QueryStatus::Running => Self::Running,
+            QueryStatus::Completed => Self::Completed,
+            QueryStatus::Failed => Self::Failed,
         }
     }
 }

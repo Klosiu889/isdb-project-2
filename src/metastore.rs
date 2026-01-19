@@ -8,26 +8,19 @@ use std::{
 };
 use uuid::Uuid;
 
-use lib::{Column, ColumnData, Serializer as TableSerializer, Table};
-use openapi_client::models::{
-    Column as OpenapiColumn, CopyQuery, LogicalColumnType, Query as OpenapiQuery,
-    QueryQueryDefinition, QueryResultInner, QueryResultInnerColumnsInner, SelectQuery,
-    ShallowQuery, ShallowTable, TableSchema,
-};
+use lib;
+use openapi_client::models;
 use serde::{Deserialize, Serialize};
 use swagger::{OneOf2, OneOf3};
 use tokio::sync::RwLock;
 
-use crate::{
-    query::{self, Query, QueryDefinition, QueryError, QueryStatus},
-    utils::convert_to_table_file_table,
-};
+use crate::{query, utils::convert_to_table_file_table};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TableMetaData {
     pub(crate) name: String,
     #[serde(skip)]
-    pub(crate) table: Table,
+    pub(crate) table: lib::Table,
     pub(crate) table_file: String,
 }
 
@@ -70,7 +63,7 @@ pub struct Metastore {
     pub(crate) tables: HashMap<String, TableMetaData>,
     pub(crate) tables_name_id: HashMap<String, String>,
     pub(crate) table_accesses: HashMap<String, HashSet<String>>,
-    pub(crate) queries: HashMap<String, Query>,
+    pub(crate) queries: HashMap<String, query::Query>,
 }
 
 impl Metastore {
@@ -84,34 +77,34 @@ impl Metastore {
         }
     }
 
-    pub fn get_shallow_tables(&self) -> Vec<ShallowTable> {
+    pub fn get_shallow_tables(&self) -> Vec<models::ShallowTable> {
         self.tables
             .iter()
             .filter(|(id, _)| !self.scheduled_for_deletion.contains(*id))
-            .map(|(id, metadata)| ShallowTable {
+            .map(|(id, metadata)| models::ShallowTable {
                 table_id: Some(id.clone()),
                 name: metadata.name.clone(),
             })
             .collect()
     }
 
-    pub fn get_table(&self, id: &String) -> Result<TableSchema, MetastoreError> {
+    pub fn get_table(&self, id: &String) -> Result<models::TableSchema, MetastoreError> {
         if self.scheduled_for_deletion.contains(id) {
             return Err(MetastoreError::TableAccessError(Error::new(
                 "Couldn't find a table of given ID",
             )));
         }
 
-        let table = self.tables.get(id).map(|metadata| TableSchema {
+        let table = self.tables.get(id).map(|metadata| models::TableSchema {
             name: metadata.name.clone(),
             columns: metadata
                 .table
                 .iter_columns()
-                .map(|column| OpenapiColumn {
+                .map(|column| models::Column {
                     name: column.name.clone(),
                     r#type: match column.data {
-                        ColumnData::INT64(_) => LogicalColumnType::Int64,
-                        ColumnData::STR(_) => LogicalColumnType::Varchar,
+                        lib::ColumnData::INT64(_) => models::LogicalColumnType::Int64,
+                        lib::ColumnData::STR(_) => models::LogicalColumnType::Varchar,
                     },
                 })
                 .collect(),
@@ -142,7 +135,10 @@ impl Metastore {
         )))
     }
 
-    pub fn create_table(&mut self, table_schema: TableSchema) -> Result<String, MetastoreError> {
+    pub fn create_table(
+        &mut self,
+        table_schema: models::TableSchema,
+    ) -> Result<String, MetastoreError> {
         let mut errors = vec![];
         let existing_table_id = self.tables_name_id.get(&table_schema.name);
 
@@ -172,11 +168,15 @@ impl Metastore {
             .columns
             .iter()
             .map(|column| match column.r#type {
-                LogicalColumnType::Int64 => Column::new_int_col(column.name.clone(), vec![]),
-                LogicalColumnType::Varchar => Column::new_str_col(column.name.clone(), vec![]),
+                models::LogicalColumnType::Int64 => {
+                    lib::Column::new_int_col(column.name.clone(), vec![])
+                }
+                models::LogicalColumnType::Varchar => {
+                    lib::Column::new_str_col(column.name.clone(), vec![])
+                }
             })
             .collect();
-        let table = Table::new(0, columns);
+        let table = lib::Table::new(0, columns);
         let table_id = Uuid::new_v4().to_string();
         let metadata = TableMetaData {
             name: table_schema.name.clone(),
@@ -190,37 +190,59 @@ impl Metastore {
         Ok(table_id)
     }
 
-    pub fn get_queries(&self) -> Vec<ShallowQuery> {
+    pub fn get_queries(&self) -> Vec<models::ShallowQuery> {
         self.queries
             .iter()
-            .map(|(id, query)| ShallowQuery {
+            .map(|(id, query)| models::ShallowQuery {
                 query_id: id.clone(),
                 status: query.status.clone().into(),
             })
             .collect()
     }
 
-    pub fn get_query(&self, id: &String) -> Result<OpenapiQuery, MetastoreError> {
-        let query = self.queries.get(id).map(|query| OpenapiQuery {
+    pub fn get_query(&self, id: &String) -> Result<models::Query, MetastoreError> {
+        let query = self.queries.get(id).map(|query| models::Query {
             query_id: id.clone(),
             status: query.status.clone().into(),
             is_result_available: Some(query.result.is_some()),
             query_definition: match &query.definition {
-                QueryDefinition::Select(val) => {
-                    QueryQueryDefinition::from(OneOf2::A(SelectQuery {
-                        //TODO
-                        column_clauses: vec![],
-                        where_clause: None,
-                        order_by_clause: None,
-                        limit_clause: None,
+                query::QueryDefinition::Select(select) => {
+                    models::QueryQueryDefinition::from(OneOf2::A(models::SelectQuery {
+                        column_clauses: select
+                            .column_clauses
+                            .clone()
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
+                        where_clause: select.where_clause.clone().map(Into::into),
+                        order_by_clause: if select.order_by_clause.len() == 0 {
+                            None
+                        } else {
+                            Some(
+                                select
+                                    .order_by_clause
+                                    .iter()
+                                    .map(|clause| models::OrderByExpression {
+                                        column_index: Some(clause.column_index as i32),
+                                        ascending: Some(clause.asscending),
+                                    })
+                                    .collect(),
+                            )
+                        },
+
+                        limit_clause: Some(models::LimitExpression {
+                            limit: select.limit,
+                        }),
                     }))
                 }
-                QueryDefinition::Copy(val) => QueryQueryDefinition::from(OneOf2::B(CopyQuery {
-                    source_filepath: val.source_filepath.clone(),
-                    destination_table_name: val.table_name.clone(),
-                    destination_columns: val.destination_columns.clone(),
-                    does_csv_contain_header: Some(val.does_csv_contain_header),
-                })),
+                query::QueryDefinition::Copy(copy) => {
+                    models::QueryQueryDefinition::from(OneOf2::B(models::CopyQuery {
+                        source_filepath: copy.source_filepath.clone(),
+                        destination_table_name: copy.table_name.clone(),
+                        destination_columns: copy.destination_columns.clone(),
+                        does_csv_contain_header: Some(copy.does_csv_contain_header),
+                    }))
+                }
             },
         });
 
@@ -232,29 +254,85 @@ impl Metastore {
         }
     }
 
-    pub fn create_select_query(&mut self, query: &SelectQuery) -> Result<String, MetastoreError> {
-        //TODO
-        let table_id = self.tables_name_id.get(&"TODO".to_string()).ok_or(
-            MetastoreError::QueryCreationError(vec![Error::with_context(
-                "There is no table with that name",
-                //TODO
-                "TODO".to_string(),
-            )]),
-        )?;
+    pub fn create_select_query(
+        &mut self,
+        query: &models::SelectQuery,
+    ) -> Result<String, MetastoreError> {
+        let mut errors = Vec::new();
+        let mut parsed_column_clauses = Vec::<query::ColumnExpression>::new();
+        for clause in &query.column_clauses {
+            match clause.clone().try_into() {
+                Ok(expr) => parsed_column_clauses.push(expr),
+                Err(e) => errors.push(Error::new(e.as_str())),
+            }
+        }
+        let parsed_where_clause: Option<query::ColumnExpression> =
+            if let Some(clause) = &query.where_clause {
+                match clause.clone().try_into() {
+                    Ok(expr) => Some(expr),
+                    Err(e) => {
+                        errors.push(Error::new(e.as_str()));
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+        let mut parsed_order_by_clauses = Vec::<query::OrderByExpression>::new();
+        for clause in query.order_by_clause.as_deref().unwrap_or_default() {
+            match clause.clone().try_into() {
+                Ok(expr) => parsed_order_by_clauses.push(expr),
+                Err(e) => errors.push(Error::new(e.as_str())),
+            }
+        }
+
+        if !errors.is_empty() {
+            return Err(MetastoreError::QueryCreationError(errors));
+        }
+
+        let unique_tables = parsed_column_clauses
+            .iter()
+            .chain(parsed_where_clause.iter())
+            .flat_map(|expr| expr.get_tables_names())
+            .collect::<HashSet<_>>();
+        if unique_tables.len() > 1 {
+            return Err(MetastoreError::QueryCreationError(vec![
+                Error::with_context(
+                    "More than one table name used in query",
+                    unique_tables.into_iter().collect::<Vec<_>>().join(", "),
+                ),
+            ]));
+        }
+
+        let table_name =
+            unique_tables
+                .into_iter()
+                .next()
+                .ok_or(MetastoreError::QueryCreationError(vec![Error::new(
+                    "Query must reference at least one table column",
+                )]))?;
+        let table_id =
+            self.tables_name_id
+                .get(&table_name)
+                .ok_or(MetastoreError::QueryCreationError(vec![
+                    Error::with_context("There is no table with that name", table_name),
+                ]))?;
 
         let query_id = Uuid::new_v4().to_string();
         self.table_accesses
             .entry(table_id.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(query_id.clone());
         self.queries.insert(
             query_id.clone(),
-            Query::new(
-                QueryStatus::Created,
-                QueryDefinition::Select(query::SelectQuery {
+            query::Query::new(
+                query::QueryStatus::Created,
+                query::QueryDefinition::Select(query::SelectQuery {
                     table_id: table_id.clone(),
-                    //TODO
-                    table_name: "TODO".to_string(),
+                    column_clauses: parsed_column_clauses,
+                    where_clause: parsed_where_clause,
+                    order_by_clause: parsed_order_by_clauses,
+                    limit: query.limit_clause.as_ref().and_then(|f| f.limit),
                 }),
             ),
         );
@@ -262,7 +340,10 @@ impl Metastore {
         Ok(query_id)
     }
 
-    pub fn create_copy_query(&mut self, query: &CopyQuery) -> Result<String, MetastoreError> {
+    pub fn create_copy_query(
+        &mut self,
+        query: &models::CopyQuery,
+    ) -> Result<String, MetastoreError> {
         let path = Path::new(&query.source_filepath);
         if !path.exists() {
             return Err(MetastoreError::QueryCreationError(vec![
@@ -283,13 +364,13 @@ impl Metastore {
         let query_id = Uuid::new_v4().to_string();
         self.table_accesses
             .entry(table_id.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(query_id.clone());
         self.queries.insert(
             query_id.clone(),
-            Query::new(
-                QueryStatus::Created,
-                QueryDefinition::Copy(query::CopyQuery {
+            query::Query::new(
+                query::QueryStatus::Created,
+                query::QueryDefinition::Copy(query::CopyQuery {
                     table_id: table_id.clone(),
                     table_name: query.destination_table_name.clone(),
                     source_filepath: query.source_filepath.clone(),
@@ -306,7 +387,7 @@ impl Metastore {
         &self,
         query_id: &String,
         row_limit: Option<i32>,
-    ) -> Result<Vec<QueryResultInner>, MetastoreError> {
+    ) -> Result<Vec<models::QueryResultInner>, MetastoreError> {
         let result_table_ids = self.get_result_table_ids(query_id)?;
 
         let api_results = result_table_ids
@@ -325,7 +406,7 @@ impl Metastore {
         &mut self,
         query_id: &String,
         row_limit: Option<i32>,
-    ) -> Result<Vec<QueryResultInner>, MetastoreError> {
+    ) -> Result<Vec<models::QueryResultInner>, MetastoreError> {
         let result_table_ids = self.get_result_table_ids(query_id)?;
 
         let api_results = result_table_ids
@@ -362,7 +443,11 @@ impl Metastore {
         Ok(result.iter().map(|res| res.table_id.clone()).collect())
     }
 
-    fn build_single_table_result(&self, table: &Table, row_limit: Option<i32>) -> QueryResultInner {
+    fn build_single_table_result(
+        &self,
+        table: &lib::Table,
+        row_limit: Option<i32>,
+    ) -> models::QueryResultInner {
         let total_rows = table.get_num_rows() as i32;
         let limit = row_limit.unwrap_or(total_rows);
         let row_count = min(total_rows, limit);
@@ -370,16 +455,16 @@ impl Metastore {
         let columns = table
             .iter_columns()
             .map(|column| match &column.data {
-                ColumnData::INT64(raw) => QueryResultInnerColumnsInner::from(OneOf3::A(
-                    raw.iter().take(row_count as usize).cloned().collect(),
-                )),
-                ColumnData::STR(raw) => QueryResultInnerColumnsInner::from(OneOf3::B(
+                lib::ColumnData::INT64(raw) => models::QueryResultInnerColumnsInner::from(
+                    OneOf3::A(raw.iter().take(row_count as usize).cloned().collect()),
+                ),
+                lib::ColumnData::STR(raw) => models::QueryResultInnerColumnsInner::from(OneOf3::B(
                     raw.iter().take(row_count as usize).cloned().collect(),
                 )),
             })
             .collect();
 
-        QueryResultInner {
+        models::QueryResultInner {
             row_count: Some(row_count),
             columns: Some(columns),
         }
@@ -401,7 +486,7 @@ impl Metastore {
         }
     }
 
-    pub fn get_query_error(&self, id: &String) -> Result<Vec<QueryError>, MetastoreError> {
+    pub fn get_query_error(&self, id: &String) -> Result<Vec<query::QueryError>, MetastoreError> {
         let query = self.queries.get(id);
 
         match query {
@@ -417,15 +502,15 @@ impl Metastore {
         }
     }
 
-    pub fn get_query_internal_mut(&mut self, id: &String) -> Option<&mut Query> {
+    pub fn get_query_internal_mut(&mut self, id: &String) -> Option<&mut query::Query> {
         self.queries.get_mut(id)
     }
 
-    pub fn get_table_internal(&self, table_id: &String) -> Option<&Table> {
+    pub fn get_table_internal(&self, table_id: &String) -> Option<&lib::Table> {
         self.tables.get(table_id).map(|metadata| &metadata.table)
     }
 
-    pub fn get_table_internal_mut(&mut self, table_id: &String) -> Option<&mut Table> {
+    pub fn get_table_internal_mut(&mut self, table_id: &String) -> Option<&mut lib::Table> {
         self.tables
             .get_mut(table_id)
             .map(|metadata| &mut metadata.table)
@@ -434,7 +519,7 @@ impl Metastore {
 
 pub type SharedMetastore = Arc<RwLock<Metastore>>;
 
-pub async fn load_metastore(file_path: &str, serializer: &TableSerializer) -> SharedMetastore {
+pub async fn load_metastore(file_path: &str, serializer: &lib::Serializer) -> SharedMetastore {
     let mut metastore = if let Ok(data) = fs::read_to_string(file_path) {
         serde_json::from_str(&data).unwrap_or_default()
     } else {
@@ -453,7 +538,7 @@ pub async fn load_metastore(file_path: &str, serializer: &TableSerializer) -> Sh
 pub async fn save_metastore(
     metastore: SharedMetastore,
     file_path: &str,
-    serializer: &TableSerializer,
+    serializer: &lib::Serializer,
 ) {
     let metastore_guard = metastore.read().await;
 
