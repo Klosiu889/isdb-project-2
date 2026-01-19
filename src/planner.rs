@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use log::error;
 
@@ -78,7 +78,8 @@ impl Planner {
             .column_clauses
             .iter()
             .chain(select.where_clause.iter())
-            .flat_map(|expr| expr.get_column_names());
+            .flat_map(|expr| expr.get_columns_names())
+            .collect::<HashSet<_>>();
         let column_indexes_map = {
             let metastore_guard = metastore.read().await;
             let table = metastore_guard
