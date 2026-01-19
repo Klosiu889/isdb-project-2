@@ -4,23 +4,27 @@ use log::error;
 
 use crate::{metastore, query};
 
+pub struct SelectPlan {
+    pub table_id: String,
+    pub column_indexes_map: HashMap<String, usize>,
+    pub expressions_map: HashMap<query::ColumnExpression, usize>,
+    pub column_expressions: Vec<usize>,
+    pub filter_expression: Option<usize>,
+    pub sorts: Vec<query::OrderByExpression>,
+    pub limit: Option<i32>,
+}
+
+pub struct CopyFromCsvPlan {
+    pub table_id: String,
+    pub table_name: String,
+    pub file_path: String,
+    pub mapping: Option<Vec<String>>,
+    pub has_headers: bool,
+}
+
 pub enum PhysicalPlan {
-    Select {
-        table_id: String,
-        column_indexes_map: HashMap<String, usize>,
-        expressions_map: HashMap<query::ColumnExpression, usize>,
-        column_expressions: Vec<usize>,
-        filter_expression: Option<usize>,
-        sorts: Vec<query::OrderByExpression>,
-        limit: Option<i32>,
-    },
-    CopyFromCsv {
-        table_id: String,
-        table_name: String,
-        file_path: String,
-        mapping: Option<Vec<String>>,
-        have_headers: bool,
-    },
+    Select(SelectPlan),
+    CopyFromCsv(CopyFromCsvPlan),
 }
 
 #[derive(Clone)]
@@ -156,7 +160,7 @@ impl Planner {
             }
         }
 
-        Ok(PhysicalPlan::Select {
+        Ok(PhysicalPlan::Select(SelectPlan {
             table_id: select.table_id,
             column_indexes_map: column_indexes_map,
             expressions_map: expression_map,
@@ -164,7 +168,7 @@ impl Planner {
             filter_expression: filter_expression,
             sorts: select.order_by_clause,
             limit: select.limit,
-        })
+        }))
     }
 
     fn add_expression_to_map(
@@ -214,13 +218,13 @@ impl Planner {
             }
         }
 
-        Ok(PhysicalPlan::CopyFromCsv {
+        Ok(PhysicalPlan::CopyFromCsv(CopyFromCsvPlan {
             table_id: copy.table_id,
             table_name: copy.table_name,
             file_path: copy.source_filepath,
             mapping: copy.destination_columns,
-            have_headers: copy.does_csv_contain_header,
-        })
+            has_headers: copy.does_csv_contain_header,
+        }))
     }
 
     async fn fail_query(
