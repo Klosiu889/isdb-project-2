@@ -128,7 +128,7 @@ impl Executor {
             )?;
 
             let mask = match filter_result.as_ref() {
-                lib::ColumnData::INT64(vec) => vec.clone(),
+                lib::ColumnData::BOOL(vec) => vec.clone(),
                 _ => return Err("Where clause did not evaluate correctly".to_string()),
             };
 
@@ -145,9 +145,10 @@ impl Executor {
                 match data_mut {
                     lib::ColumnData::STR(raw) => self.apply_mask(raw, &mask),
                     lib::ColumnData::INT64(raw) => self.apply_mask(raw, &mask),
+                    lib::ColumnData::BOOL(raw) => self.apply_mask(raw, &mask),
                 }
             }
-            current_row_count = mask.iter().filter(|&&b| b == 1i64).count();
+            current_row_count = mask.iter().filter(|&&b| b).count();
         }
 
         let evaluated_columns = select_plan
@@ -173,6 +174,7 @@ impl Executor {
                     let ordering = match col.as_ref() {
                         lib::ColumnData::INT64(vec) => vec[a].cmp(&vec[b]),
                         lib::ColumnData::STR(vec) => vec[a].cmp(&vec[b]),
+                        lib::ColumnData::BOOL(vec) => vec[a].cmp(&vec[b]),
                     };
 
                     if ordering != Ordering::Equal {
@@ -205,6 +207,10 @@ impl Executor {
                     lib::ColumnData::STR(vec) => {
                         let new_vec = row_indices.iter().map(|&idx| vec[idx].clone()).collect();
                         lib::ColumnData::STR(new_vec)
+                    }
+                    lib::ColumnData::BOOL(vec) => {
+                        let new_vec = row_indices.iter().map(|&idx| vec[idx]).collect();
+                        lib::ColumnData::BOOL(new_vec)
                     }
                 };
                 drop(col_rc);
@@ -242,10 +248,9 @@ impl Executor {
                 query::Literal::String(val) => {
                     Ok(Rc::new(lib::ColumnData::STR(vec![val.clone(); row_count])))
                 }
-                query::Literal::Bool(val) => Ok(Rc::new(lib::ColumnData::INT64(vec![
-                    *val as i64;
-                    row_count
-                ]))),
+                query::Literal::Bool(val) => {
+                    Ok(Rc::new(lib::ColumnData::BOOL(vec![*val; row_count])))
+                }
             },
             planner::FlatExpression::Function(function_name, arg_ids) => {
                 let args = arg_ids
@@ -344,48 +349,87 @@ impl Executor {
         right_res: Rc<lib::ColumnData>,
     ) -> Result<Rc<lib::ColumnData>, String> {
         match (left_res.as_ref(), right_res.as_ref()) {
-            (lib::ColumnData::INT64(l_vec), lib::ColumnData::INT64(r_vec)) => {
-                let result_vec = l_vec
-                    .iter()
-                    .zip(r_vec.iter())
-                    .map(|(l, r)| match operator {
-                        query::BinOperator::Add => Ok(*l + *r),
-                        query::BinOperator::Subtract => Ok(*l - *r),
-                        query::BinOperator::Multiply => Ok(*l * *r),
-                        query::BinOperator::Divide => {
-                            if *r == 0 {
-                                Err("Division by 0")
-                            } else {
-                                Ok(*l / *r)
+            (lib::ColumnData::INT64(l_vec), lib::ColumnData::INT64(r_vec)) => match operator {
+                query::BinOperator::Add
+                | query::BinOperator::Subtract
+                | query::BinOperator::Multiply
+                | query::BinOperator::Divide => {
+                    let result_vec = l_vec
+                        .iter()
+                        .zip(r_vec.iter())
+                        .map(|(l, r)| match operator {
+                            query::BinOperator::Add => Ok(*l + *r),
+                            query::BinOperator::Subtract => Ok(*l - *r),
+                            query::BinOperator::Multiply => Ok(*l * *r),
+                            query::BinOperator::Divide => {
+                                if *r == 0 {
+                                    Err("Division by 0")
+                                } else {
+                                    Ok(*l / *r)
+                                }
                             }
-                        }
-                        query::BinOperator::And => Ok(*l & *r),
-                        query::BinOperator::Or => Ok(*l | *r),
-                        query::BinOperator::Equal => Ok((l == r) as i64),
-                        query::BinOperator::NotEqual => Ok((l != r) as i64),
-                        query::BinOperator::LessThan => Ok((l < r) as i64),
-                        query::BinOperator::LessEqual => Ok((l <= r) as i64),
-                        query::BinOperator::GreaterThan => Ok((l > r) as i64),
-                        query::BinOperator::GreaterEqual => Ok((l >= r) as i64),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Rc::new(lib::ColumnData::INT64(result_vec)))
-            }
+                            _ => unreachable!(),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok(Rc::new(lib::ColumnData::INT64(result_vec)))
+                }
+                query::BinOperator::Equal
+                | query::BinOperator::NotEqual
+                | query::BinOperator::LessThan
+                | query::BinOperator::LessEqual
+                | query::BinOperator::GreaterThan
+                | query::BinOperator::GreaterEqual => {
+                    let result_vec = l_vec
+                        .iter()
+                        .zip(r_vec.iter())
+                        .map(|(l, r)| match operator {
+                            query::BinOperator::Equal => l == r,
+                            query::BinOperator::NotEqual => l != r,
+                            query::BinOperator::LessThan => l < r,
+                            query::BinOperator::LessEqual => l <= r,
+                            query::BinOperator::GreaterThan => l > r,
+                            query::BinOperator::GreaterEqual => l >= r,
+                            _ => unreachable!(),
+                        })
+                        .collect::<Vec<_>>();
+                    Ok(Rc::new(lib::ColumnData::BOOL(result_vec)))
+                }
+
+                _ => Err("Forbidden operation on integers".to_string()),
+            },
             (lib::ColumnData::STR(l_vec), lib::ColumnData::STR(r_vec)) => {
                 let result_vec = l_vec
                     .iter()
                     .zip(r_vec.iter())
                     .map(|(l, r)| match operator {
-                        query::BinOperator::Equal => Ok((l == r) as i64),
-                        query::BinOperator::NotEqual => Ok((l != r) as i64),
-                        query::BinOperator::LessThan => Ok((l < r) as i64),
-                        query::BinOperator::LessEqual => Ok((l <= r) as i64),
-                        query::BinOperator::GreaterThan => Ok((l > r) as i64),
-                        query::BinOperator::GreaterEqual => Ok((l >= r) as i64),
+                        query::BinOperator::Equal => Ok(l == r),
+                        query::BinOperator::NotEqual => Ok(l != r),
+                        query::BinOperator::LessThan => Ok(l < r),
+                        query::BinOperator::LessEqual => Ok(l <= r),
+                        query::BinOperator::GreaterThan => Ok(l > r),
+                        query::BinOperator::GreaterEqual => Ok(l >= r),
                         _ => Err("Forbidden operation on strings"),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                Ok(Rc::new(lib::ColumnData::INT64(result_vec)))
+                Ok(Rc::new(lib::ColumnData::BOOL(result_vec)))
+            }
+            (lib::ColumnData::BOOL(l_vec), lib::ColumnData::BOOL(r_vec)) => {
+                let result_vec = l_vec
+                    .iter()
+                    .zip(r_vec.iter())
+                    .map(|(l, r)| match operator {
+                        query::BinOperator::And => Ok(*l && *r),
+                        query::BinOperator::Or => Ok(*l || *r),
+                        query::BinOperator::Equal => Ok(l == r),
+                        query::BinOperator::NotEqual => Ok(l != r),
+                        query::BinOperator::LessThan => Ok(l < r),
+                        query::BinOperator::LessEqual => Ok(l <= r),
+                        query::BinOperator::GreaterThan => Ok(l > r),
+                        query::BinOperator::GreaterEqual => Ok(l >= r),
+                        _ => Err("Forbidden operation on booleans"),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Rc::new(lib::ColumnData::BOOL(result_vec)))
             }
             _ => Err("Missmatched operation types".to_string()),
         }
@@ -396,25 +440,23 @@ impl Executor {
         operator: &query::Operator,
         res: Rc<lib::ColumnData>,
     ) -> Result<Rc<lib::ColumnData>, String> {
-        match res.as_ref() {
-            lib::ColumnData::INT64(vec) => {
-                let result_vec = vec
-                    .iter()
-                    .map(|v| match operator {
-                        query::Operator::Not => !v,
-                        query::Operator::Minus => -v,
-                    })
-                    .collect();
+        match (operator, res.as_ref()) {
+            (query::Operator::Minus, lib::ColumnData::INT64(vec)) => {
+                let result_vec = vec.iter().map(|v| -v).collect();
                 Ok(Rc::new(lib::ColumnData::INT64(result_vec)))
+            }
+            (query::Operator::Not, lib::ColumnData::BOOL(vec)) => {
+                let result_vec = vec.iter().map(|v| !v).collect();
+                Ok(Rc::new(lib::ColumnData::BOOL(result_vec)))
             }
             _ => Err("Mismatched operation type".to_string()),
         }
     }
 
-    fn apply_mask<T>(&self, data: &mut Vec<T>, mask: &[i64]) {
+    fn apply_mask<T>(&self, data: &mut Vec<T>, mask: &[bool]) {
         let mut keep_idx = 0;
         for read_idx in 0..data.len() {
-            if mask[read_idx] == 1 {
+            if mask[read_idx] {
                 if read_idx != keep_idx {
                     data.swap(read_idx, keep_idx);
                 }
@@ -462,6 +504,10 @@ impl Executor {
                         lib::ColumnData::INT64(_) => (
                             column.name.clone(),
                             lib::ColumnData::INT64(Vec::with_capacity(records.len())),
+                        ),
+                        lib::ColumnData::BOOL(_) => (
+                            column.name.clone(),
+                            lib::ColumnData::BOOL(Vec::with_capacity(records.len())),
                         ),
                     })
                     .collect::<HashMap<_, _>>(),
@@ -540,6 +586,17 @@ impl Executor {
                     }
                     lib::ColumnData::STR(vec) => {
                         vec.push(raw_val.clone());
+                    }
+                    lib::ColumnData::BOOL(vec) => {
+                        let val = raw_val.trim().parse::<bool>().map_err(|_| {
+                            format!(
+                                "Type Error at Row {}, Column '{}': Expected INT64, got '{}'",
+                                row_idx + 1,
+                                col_name,
+                                raw_val
+                            )
+                        })?;
+                        vec.push(val);
                     }
                 }
             }
@@ -644,6 +701,11 @@ impl Executor {
                             let mut vec = Vec::new();
                             vec.resize(num_rows as usize, "".to_string());
                             lib::ColumnData::STR(vec)
+                        }
+                        lib::ColumnData::BOOL(_) => {
+                            let mut vec = Vec::new();
+                            vec.resize(num_rows as usize, false);
+                            lib::ColumnData::BOOL(vec)
                         }
                     });
 

@@ -128,6 +128,7 @@ impl Planner {
                 let type_ = match col.data {
                     lib::ColumnData::STR(_) => query::ExpressionType::String,
                     lib::ColumnData::INT64(_) => query::ExpressionType::I64,
+                    lib::ColumnData::BOOL(_) => query::ExpressionType::Bool,
                 };
                 types.insert(col.name.clone(), type_);
             }

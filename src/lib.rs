@@ -41,6 +41,7 @@ const VERSION: u8 = 1;
 pub enum ColumnData {
     INT64(Vec<i64>),
     STR(Vec<String>),
+    BOOL(Vec<bool>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -158,7 +159,7 @@ impl Serializer {
             f.write_all(column.name.as_bytes())?;
 
             let type_byte = match column.data {
-                ColumnData::INT64(_) => 0u8,
+                ColumnData::BOOL(_) | ColumnData::INT64(_) => 0u8,
                 ColumnData::STR(_) => 1u8,
             };
             f.write_all(&[type_byte])?;
@@ -191,6 +192,14 @@ impl Serializer {
             match &column.data {
                 ColumnData::INT64(data) => {
                     let compressed_data = self.int_compressor.compress(data.as_slice())?;
+                    let offset = f.stream_position()?;
+                    let length = compressed_data.len() as u64;
+                    offsets_and_lengths.push(Location::INT { offset, length });
+                    f.write_all(&compressed_data)?;
+                }
+                ColumnData::BOOL(data) => {
+                    let int_data = data.iter().map(|&v| v as i64).collect::<Vec<_>>();
+                    let compressed_data = self.int_compressor.compress(int_data.as_slice())?;
                     let offset = f.stream_position()?;
                     let length = compressed_data.len() as u64;
                     offsets_and_lengths.push(Location::INT { offset, length });
@@ -305,7 +314,7 @@ impl Serializer {
             let length = u64::from_le_bytes(len);
 
             let description = match data {
-                ColumnData::INT64(_) => ColumnDescription {
+                ColumnData::BOOL(_) | ColumnData::INT64(_) => ColumnDescription {
                     name,
                     data,
                     offset,
@@ -336,7 +345,7 @@ impl Serializer {
             f.read_exact(&mut buf)?;
 
             match desc.data {
-                ColumnData::INT64(_) => {
+                ColumnData::BOOL(_) | ColumnData::INT64(_) => {
                     let mut int_data = self.int_compressor.decompress(&buf)?;
                     int_data.resize(num_rows as usize, 0i64);
                     columns.push(Column::new_int_col(desc.name, int_data));

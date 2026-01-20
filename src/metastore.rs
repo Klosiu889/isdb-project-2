@@ -105,6 +105,7 @@ impl Metastore {
                     r#type: match column.data {
                         lib::ColumnData::INT64(_) => models::LogicalColumnType::Int64,
                         lib::ColumnData::STR(_) => models::LogicalColumnType::Varchar,
+                        lib::ColumnData::BOOL(_) => models::LogicalColumnType::Int64,
                     },
                 })
                 .collect(),
@@ -510,6 +511,9 @@ impl Metastore {
                 lib::ColumnData::STR(raw) => models::QueryResultInnerColumnsInner::from(OneOf3::B(
                     raw.iter().take(row_count as usize).cloned().collect(),
                 )),
+                lib::ColumnData::BOOL(raw) => models::QueryResultInnerColumnsInner::from(
+                    OneOf3::C(raw.iter().take(row_count as usize).cloned().collect()),
+                ),
             })
             .collect();
 
