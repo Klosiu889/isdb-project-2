@@ -140,6 +140,21 @@ impl Metastore {
         table_schema: models::TableSchema,
     ) -> Result<String, MetastoreError> {
         let mut errors = vec![];
+
+        if table_schema.name.is_empty() {
+            errors.push(Error::new("Table has an empty name"));
+        }
+        if table_schema.columns.is_empty() {
+            errors.push(Error::new("Table has no columns"));
+        }
+        if table_schema.columns.iter().any(|col| col.name.is_empty()) {
+            errors.push(Error::new("One of the columns have empty name"));
+        }
+
+        if !errors.is_empty() {
+            return Err(MetastoreError::TableCreationError(errors));
+        }
+
         let existing_table_id = self.tables_name_id.get(&table_schema.name);
 
         if let Some(id) = existing_table_id
@@ -304,31 +319,30 @@ impl Metastore {
             ]));
         }
 
-        let table_name =
-            unique_tables
-                .into_iter()
-                .next()
-                .ok_or(MetastoreError::QueryCreationError(vec![Error::new(
-                    "Query must reference at least one table column",
-                )]))?;
-        let table_id =
-            self.tables_name_id
+        let query_id = Uuid::new_v4().to_string();
+        let table_id = if let Some(table_name) = unique_tables.into_iter().next() {
+            let tid = self
+                .tables_name_id
                 .get(&table_name)
                 .ok_or(MetastoreError::QueryCreationError(vec![
                     Error::with_context("There is no table with that name", table_name),
-                ]))?;
+                ]))?
+                .clone();
+            self.table_accesses
+                .entry(tid.clone())
+                .or_default()
+                .insert(query_id.clone());
+            Some(tid)
+        } else {
+            None
+        };
 
-        let query_id = Uuid::new_v4().to_string();
-        self.table_accesses
-            .entry(table_id.clone())
-            .or_default()
-            .insert(query_id.clone());
         self.queries.insert(
             query_id.clone(),
             query::Query::new(
                 query::QueryStatus::Created,
                 query::QueryDefinition::Select(query::SelectQuery {
-                    table_id: table_id.clone(),
+                    table_id: table_id,
                     column_clauses: parsed_column_clauses,
                     where_clause: parsed_where_clause,
                     order_by_clause: parsed_order_by_clauses,

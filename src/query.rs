@@ -391,7 +391,9 @@ impl TryFrom<models::ColumnExpression> for ColumnExpression {
         match value.into() {
             OneOf5::A(reference) => Ok(ColumnExpression::Ref(ColumnReferenceExpression {
                 table_name: reference.table_name,
-                column_name: reference.column_name,
+                column_name: reference
+                    .column_name
+                    .ok_or("Missing column name in not star reference")?,
             })),
             OneOf5::B(literal) => Ok(ColumnExpression::Literal(literal.value.into())),
             OneOf5::C(function) => Ok(ColumnExpression::Function(Function {
@@ -421,7 +423,7 @@ impl From<ColumnExpression> for models::ColumnExpression {
         let one_of_value = match value {
             ColumnExpression::Ref(reference) => OneOf5::A(models::ColumnReferenceExpression {
                 table_name: reference.table_name,
-                column_name: reference.column_name,
+                column_name: Some(reference.column_name),
             }),
             ColumnExpression::Literal(literal) => OneOf5::B(models::Literal {
                 value: literal.into(),
@@ -477,7 +479,7 @@ impl From<OrderByExpression> for models::OrderByExpression {
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct SelectQuery {
-    pub table_id: String,
+    pub table_id: Option<String>,
     pub column_clauses: Vec<ColumnExpression>,
     pub where_clause: Option<ColumnExpression>,
     pub order_by_clause: Vec<OrderByExpression>,

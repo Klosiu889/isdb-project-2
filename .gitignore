@@ -3,3 +3,4 @@ __pycache__/
 openapi/*
 tables/*
 metastore.json
+gotests

@@ -375,7 +375,6 @@ components:
       description: Description of a reference to a column used in column expression
       required:
         - tableName
-        - columnName
       properties:
         tableName:
           type: string

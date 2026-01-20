@@ -84,14 +84,13 @@ impl Executor {
         select_plan: &planner::SelectPlan,
         metastore: &metastore::SharedMetastore,
     ) -> Result<(Vec<lib::ColumnData>, usize), String> {
-        let (mut working_columns, mut current_row_count) = {
+        let (mut working_columns, mut current_row_count) = if let Some(table_id) =
+            &select_plan.table_id
+        {
             let metastore_guard = metastore.read().await;
             let table = metastore_guard
-                .get_table_internal(&select_plan.table_id)
-                .ok_or(format!(
-                    "Table {} not found during execution",
-                    select_plan.table_id
-                ))?;
+                .get_table_internal(table_id)
+                .ok_or(format!("Table {} not found during execution", table_id))?;
 
             let mut working_columns_innter: HashMap<String, Rc<lib::ColumnData>> = HashMap::new();
             for (col_name, &col_index) in &select_plan.column_indexes_map {
@@ -99,6 +98,8 @@ impl Executor {
                 working_columns_innter.insert(col_name.clone(), Rc::new(col_data.clone()));
             }
             (working_columns_innter, table.get_num_rows() as usize)
+        } else {
+            (HashMap::new(), 0)
         };
 
         let mut expressions_results = vec![None; select_plan.expressions_map.len()];
@@ -576,8 +577,10 @@ impl Executor {
                         }
 
                         if let query::QueryDefinition::Select(select) = &mut query.definition {
-                            if select.table_id == copy_plan.table_id {
-                                select.table_id = snapshot_id.clone();
+                            if let Some(current_table_id) = &select.table_id {
+                                if *current_table_id == copy_plan.table_id {
+                                    select.table_id = Some(snapshot_id.clone());
+                                }
                             }
                         }
 

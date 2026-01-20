@@ -18,7 +18,7 @@ pub enum FlatExpression {
 }
 
 pub struct SelectPlan {
-    pub table_id: String,
+    pub table_id: Option<String>,
     pub column_indexes_map: HashMap<String, usize>,
     pub expressions_map: Vec<FlatExpression>,
     pub column_expressions: Vec<usize>,
@@ -97,10 +97,10 @@ impl Planner {
             .chain(select.where_clause.iter())
             .flat_map(|expr| expr.get_columns_names())
             .collect::<HashSet<_>>();
-        let (column_indexes_map, column_types_map) = {
+        let (column_indexes_map, column_types_map) = if let Some(table_id) = &select.table_id {
             let metastore_guard = metastore.read().await;
             let table = metastore_guard
-                .get_table_internal(&select.table_id)
+                .get_table_internal(table_id)
                 .ok_or("Table was deleted before planning query".to_string())?;
 
             let mut indexes = HashMap::new();
@@ -115,6 +115,8 @@ impl Planner {
             }
 
             (indexes, types)
+        } else {
+            (HashMap::new(), HashMap::new())
         };
         for name in column_names {
             if !column_indexes_map.contains_key(&name) {
