@@ -1,13 +1,23 @@
 use std::collections::{HashMap, HashSet};
 
 use log::error;
+use serde::{Deserialize, Serialize};
 
 use crate::{metastore, query};
+
+#[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq)]
+pub enum FlatExpression {
+    Ref(String),
+    Literal(query::Literal),
+    Function(query::FunctionName, Vec<usize>),
+    Binary(usize, query::BinOperator, usize),
+    Unary(query::Operator, usize),
+}
 
 pub struct SelectPlan {
     pub table_id: String,
     pub column_indexes_map: HashMap<String, usize>,
-    pub expressions_map: HashMap<query::ColumnExpression, usize>,
+    pub expressions_map: Vec<FlatExpression>,
     pub column_expressions: Vec<usize>,
     pub filter_expression: Option<usize>,
     pub sorts: Vec<query::OrderByExpression>,
@@ -109,37 +119,32 @@ impl Planner {
             }
         }
 
-        let mut expression_index_counter = 0usize;
-        let mut expression_map = HashMap::new();
-        let all_expressions = select
+        for expr in select
             .column_clauses
             .iter()
-            .chain(select.where_clause.iter());
-        for expr in all_expressions {
-            self.add_expression_to_map(&mut expression_map, &mut expression_index_counter, expr)
+            .chain(select.where_clause.iter())
+        {
+            let _ = expr.get_type(&column_types_map)?;
         }
+        if let Some(clause) = &select.where_clause {
+            let type_ = clause.get_type(&column_types_map)?;
+            if type_ != query::ExpressionType::Bool {
+                return Err("Filter expression must be of type Boolean".to_string());
+            }
+        }
+
+        let mut seen_expression = HashMap::new();
+        let mut flat_expressions = Vec::new();
 
         let column_expressions = select
             .column_clauses
             .iter()
-            .map(|expr| {
-                expression_map
-                    .get(expr)
-                    .cloned()
-                    .ok_or("Column expression was not mapped correctly")
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|expr| self.flatten_expression(expr, &mut flat_expressions, &mut seen_expression))
+            .collect();
 
-        let filter_expression = select
-            .where_clause
-            .as_ref()
-            .map(|expr| {
-                expression_map
-                    .get(&expr)
-                    .copied()
-                    .ok_or("Filter expression was not mapped correctly")
-            })
-            .transpose()?;
+        let filter_expression = select.where_clause.map(|expr| {
+            self.flatten_expression(&expr, &mut flat_expressions, &mut seen_expression)
+        });
 
         for clause in &select.order_by_clause {
             if clause.column_index >= select.column_clauses.len() {
@@ -150,20 +155,10 @@ impl Planner {
             }
         }
 
-        for expr in expression_map.keys() {
-            let _ = expr.get_type(&column_types_map)?;
-        }
-        if let Some(clause) = &select.where_clause {
-            let type_ = clause.get_type(&column_types_map)?;
-            if type_ != query::ExpressionType::Bool {
-                return Err("Filter expression must be of type Boolean".to_string());
-            }
-        }
-
         Ok(PhysicalPlan::Select(SelectPlan {
             table_id: select.table_id,
             column_indexes_map: column_indexes_map,
-            expressions_map: expression_map,
+            expressions_map: flat_expressions,
             column_expressions: column_expressions,
             filter_expression: filter_expression,
             sorts: select.order_by_clause,
@@ -171,32 +166,46 @@ impl Planner {
         }))
     }
 
-    fn add_expression_to_map(
+    fn flatten_expression(
         &self,
-        map: &mut HashMap<query::ColumnExpression, usize>,
-        counter: &mut usize,
         expr: &query::ColumnExpression,
-    ) {
-        match expr {
-            query::ColumnExpression::Unary(unary) => {
-                self.add_expression_to_map(map, counter, &unary.operand);
+        flat_expressions: &mut Vec<FlatExpression>,
+        seen: &mut HashMap<FlatExpression, usize>,
+    ) -> usize {
+        let flat_node = match expr {
+            query::ColumnExpression::Ref(reference) => {
+                FlatExpression::Ref(reference.column_name.clone())
+            }
+            query::ColumnExpression::Literal(literal) => FlatExpression::Literal(literal.clone()),
+            query::ColumnExpression::Function(function) => {
+                let arg_ids = function
+                    .arguments
+                    .iter()
+                    .map(|arg| self.flatten_expression(arg, flat_expressions, seen))
+                    .collect();
+                FlatExpression::Function(function.name.clone(), arg_ids)
             }
             query::ColumnExpression::Binary(binary) => {
-                self.add_expression_to_map(map, counter, &binary.left_operand);
-                self.add_expression_to_map(map, counter, &binary.right_operand);
+                let left_id = self.flatten_expression(&binary.left_operand, flat_expressions, seen);
+                let right_id =
+                    self.flatten_expression(&binary.right_operand, flat_expressions, seen);
+                FlatExpression::Binary(left_id, binary.operator.clone(), right_id)
             }
-            query::ColumnExpression::Function(function) => {
-                for arg in &function.arguments {
-                    self.add_expression_to_map(map, counter, arg);
-                }
+            query::ColumnExpression::Unary(unary) => {
+                let child_id = self.flatten_expression(&unary.operand, flat_expressions, seen);
+                FlatExpression::Unary(unary.operator.clone(), child_id)
             }
-            _ => {}
+        };
+
+        if let Some(&id) = seen.get(&flat_node) {
+            return id;
         }
 
-        if !map.contains_key(&expr) {
-            map.insert(expr.clone(), *counter);
-            *counter += 1;
-        }
+        let id = flat_expressions.len();
+        flat_expressions.push(flat_node.clone());
+        seen.insert(flat_node, id);
+
+        id
     }
 
     async fn copy_from_csv(
