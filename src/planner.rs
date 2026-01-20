@@ -17,6 +17,10 @@ pub enum FlatExpression {
     Unary(query::Operator, usize),
 }
 
+pub struct SelectAllPlan {
+    pub table_id: String,
+}
+
 pub struct SelectPlan {
     pub table_id: Option<String>,
     pub column_indexes_map: HashMap<String, usize>,
@@ -36,6 +40,7 @@ pub struct CopyFromCsvPlan {
 }
 
 pub enum PhysicalPlan {
+    SelectAll(SelectAllPlan),
     Select(SelectPlan),
     CopyFromCsv(CopyFromCsvPlan),
 }
@@ -73,7 +78,10 @@ impl Planner {
         }
 
         let result = match query_def {
-            query::QueryDefinition::Select(select) => self.select_all(select, metastore).await,
+            query::QueryDefinition::SelectAll(select_all) => {
+                self.select_all(select_all, metastore).await
+            }
+            query::QueryDefinition::Select(select) => self.select(select, metastore).await,
             query::QueryDefinition::Copy(copy) => self.copy_from_csv(copy, metastore).await,
         };
 
@@ -87,6 +95,16 @@ impl Planner {
     }
 
     async fn select_all(
+        &self,
+        select_all: query::SelectAllQuery,
+        _: &metastore::SharedMetastore,
+    ) -> Result<PhysicalPlan, String> {
+        Ok(PhysicalPlan::SelectAll(SelectAllPlan {
+            table_id: select_all.table_id.clone(),
+        }))
+    }
+
+    async fn select(
         &self,
         select: query::SelectQuery,
         metastore: &metastore::SharedMetastore,

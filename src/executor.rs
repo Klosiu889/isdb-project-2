@@ -34,8 +34,11 @@ impl Executor {
         }
 
         let result = match plan {
+            planner::PhysicalPlan::SelectAll(select_all) => {
+                self.select_all(query_id, &select_all, metastore).await
+            }
             planner::PhysicalPlan::Select(select) => {
-                self.select_all(query_id, &select, metastore).await
+                self.select(query_id, &select, metastore).await
             }
             planner::PhysicalPlan::CopyFromCsv(copy) => {
                 let res = self.copy_from_csv(query_id, &copy, metastore).await;
@@ -62,6 +65,17 @@ impl Executor {
     }
 
     async fn select_all(
+        &self,
+        _: &String,
+        select_all_plan: &planner::SelectAllPlan,
+        _: &metastore::SharedMetastore,
+    ) -> Result<Option<Vec<query::QueryResult>>, String> {
+        Ok(Some(vec![query::QueryResult {
+            table_id: select_all_plan.table_id.clone(),
+        }]))
+    }
+
+    async fn select(
         &self,
         query_id: &String,
         select_plan: &planner::SelectPlan,
@@ -576,17 +590,23 @@ impl Executor {
                             }
                         }
 
-                        if let query::QueryDefinition::Select(select) = &mut query.definition {
-                            if let Some(current_table_id) = &select.table_id {
-                                if *current_table_id == copy_plan.table_id {
-                                    select.table_id = Some(snapshot_id.clone());
+                        match &mut query.definition {
+                            query::QueryDefinition::SelectAll(select_all) => {
+                                if select_all.table_id == copy_plan.table_id {
+                                    select_all.table_id = snapshot_id.clone();
                                 }
                             }
-                        }
-
-                        if let query::QueryDefinition::Copy(copy) = &mut query.definition {
-                            if copy.table_id == copy_plan.table_id {
-                                copy.table_id = snapshot_id.clone();
+                            query::QueryDefinition::Select(select) => {
+                                if let Some(current_table_id) = &select.table_id {
+                                    if *current_table_id == copy_plan.table_id {
+                                        select.table_id = Some(snapshot_id.clone());
+                                    }
+                                }
+                            }
+                            query::QueryDefinition::Copy(copy) => {
+                                if copy.table_id == copy_plan.table_id {
+                                    copy.table_id = snapshot_id.clone();
+                                }
                             }
                         }
                     }

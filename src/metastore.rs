@@ -11,7 +11,7 @@ use uuid::Uuid;
 use lib;
 use openapi_client::models;
 use serde::{Deserialize, Serialize};
-use swagger::{OneOf2, OneOf3};
+use swagger::OneOf3;
 use tokio::sync::RwLock;
 
 use crate::{query, utils::convert_to_table_file_table};
@@ -221,8 +221,13 @@ impl Metastore {
             status: query.status.clone().into(),
             is_result_available: Some(query.result.is_some()),
             query_definition: match &query.definition {
+                query::QueryDefinition::SelectAll(select_all) => {
+                    models::QueryQueryDefinition::from(OneOf3::A(models::SelectAllQuery {
+                        table_name: select_all.table_name.clone(),
+                    }))
+                }
                 query::QueryDefinition::Select(select) => {
-                    models::QueryQueryDefinition::from(OneOf2::A(models::SelectQuery {
+                    models::QueryQueryDefinition::from(OneOf3::B(models::SelectQuery {
                         column_clauses: select
                             .column_clauses
                             .clone()
@@ -251,7 +256,7 @@ impl Metastore {
                     }))
                 }
                 query::QueryDefinition::Copy(copy) => {
-                    models::QueryQueryDefinition::from(OneOf2::B(models::CopyQuery {
+                    models::QueryQueryDefinition::from(OneOf3::C(models::CopyQuery {
                         source_filepath: copy.source_filepath.clone(),
                         destination_table_name: copy.table_name.clone(),
                         destination_columns: copy.destination_columns.clone(),
@@ -267,6 +272,36 @@ impl Metastore {
                 "Couldn't find a query of given ID",
             ))),
         }
+    }
+
+    pub fn create_select_all_query(
+        &mut self,
+        query: &models::SelectAllQuery,
+    ) -> Result<String, MetastoreError> {
+        let table_id = self.tables_name_id.get(&query.table_name).ok_or(
+            MetastoreError::QueryCreationError(vec![Error::with_context(
+                "There is no table with that name",
+                query.table_name.clone(),
+            )]),
+        )?;
+
+        let query_id = Uuid::new_v4().to_string();
+        self.table_accesses
+            .entry(table_id.clone())
+            .or_default()
+            .insert(query_id.clone());
+        self.queries.insert(
+            query_id.clone(),
+            query::Query::new(
+                query::QueryStatus::Created,
+                query::QueryDefinition::SelectAll(query::SelectAllQuery {
+                    table_id: table_id.clone(),
+                    table_name: query.table_name.clone(),
+                }),
+            ),
+        );
+
+        Ok(query_id)
     }
 
     pub fn create_select_query(
@@ -488,7 +523,7 @@ impl Metastore {
         if let Some(access_set) = self.table_accesses.get_mut(table_id) {
             access_set.remove(query_id);
 
-            if access_set.is_empty() {
+            if access_set.is_empty() && self.scheduled_for_deletion.contains(table_id) {
                 if let Some(metadata) = self.tables.remove(table_id) {
                     if let Err(e) = remove_file(&metadata.table_file) {
                         warn!("Failed to delete table file {}: {}", metadata.table_file, e);

@@ -284,6 +284,7 @@ components:
           type: boolean
         queryDefinition:
           oneOf:
+            - $ref: "#/components/schemas/SelectAllQuery"
             - $ref: "#/components/schemas/SelectQuery"
             - $ref: "#/components/schemas/CopyQuery"
 
@@ -294,6 +295,7 @@ components:
       properties:
         queryDefinition:
           oneOf:
+            - $ref: "#/components/schemas/SelectAllQuery"
             - $ref: "#/components/schemas/SelectQuery"
             - $ref: "#/components/schemas/CopyQuery"
 
@@ -340,6 +342,14 @@ components:
         limitClause:
           $ref: "#/components/schemas/LimitExpression"
 
+    SelectAllQuery:
+      description: Description of a select all query
+      required:
+        - tableName
+      properties:
+        tableName:
+          type: string
+
     ColumnExpression:
       description: Description of a single column expression in SELECT query
       oneOf:
@@ -375,6 +385,7 @@ components:
       description: Description of a reference to a column used in column expression
       required:
         - tableName
+        - columnName
       properties:
         tableName:
           type: string

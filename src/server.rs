@@ -22,7 +22,7 @@ use openapi_client::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use swagger::auth::MakeAllowAllAuthenticator;
-use swagger::{ApiError, EmptyContext, Has, OneOf2, XSpanIdString};
+use swagger::{ApiError, EmptyContext, Has, OneOf3, XSpanIdString};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
@@ -285,8 +285,9 @@ where
         let mut metastore_guard = self.metastore.write().await;
         let query_def = execute_query_request.query_definition;
         let result = match &*query_def {
-            OneOf2::A(select) => metastore_guard.create_select_query(select),
-            OneOf2::B(copy) => metastore_guard.create_copy_query(copy),
+            OneOf3::A(select_all) => metastore_guard.create_select_all_query(select_all),
+            OneOf3::B(select) => metastore_guard.create_select_query(select),
+            OneOf3::C(copy) => metastore_guard.create_copy_query(copy),
         };
 
         match result {
