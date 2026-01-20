@@ -80,7 +80,8 @@ impl FunctionName {
 
     pub fn get_type(&self) -> ExpressionType {
         match self {
-            Self::Strlen | Self::Upper | Self::Lower | Self::Concat => ExpressionType::String,
+            Self::Upper | Self::Lower | Self::Concat => ExpressionType::String,
+            Self::Strlen => ExpressionType::I64,
         }
     }
 }
