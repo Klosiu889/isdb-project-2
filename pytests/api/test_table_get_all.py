@@ -9,7 +9,9 @@ def test_list_tables_empty(server):
 
 
 def test_list_tables(server):
-    data = {"name": "test_list_tables", "columns": []}
+    data = {"name": "test_list_tables", "columns": [
+        {"name": "col1", "type": "VARCHAR"},
+    ]}
     resp = requests.put(f"{BASE_URL}/table", json=data)
     assert resp.status_code == 200
 

@@ -9,7 +9,9 @@ def test_list_queries_empty(server):
 
 
 def test_list_queries(server):
-    data = {"name": "test_list_queries", "columns": []}
+    data = {"name": "test_list_queries", "columns": [
+        {"name": "c1", "type": "INT64"},
+    ]}
     resp = requests.put(f"{BASE_URL}/table", json=data)
     assert resp.status_code == 200
 

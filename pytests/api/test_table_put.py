@@ -15,7 +15,9 @@ def test_put_table(server):
 
 
 def test_put_table_with_existing_name(server):
-    data = {"name": "test_put_table_with_existing_name", "columns": []}
+    data = {"name": "test_put_table_with_existing_name", "columns": [
+        {"name": "col1", "type": "INT64"},
+    ]}
     resp = requests.put(f"{BASE_URL}/table", json=data)
     assert resp.status_code == 200
 
@@ -47,7 +49,9 @@ def test_put_table_with_duplicate_column_names(server):
 
 
 def test_put_table_with_multiple_errors(server):
-    data = {"name": "test_put_table_with_multiple_errors", "columns": []}
+    data = {"name": "test_put_table_with_multiple_errors", "columns": [
+        {"name": "col1", "type": "INT64"},
+    ]}
     resp = requests.put(f"{BASE_URL}/table", json=data)
     assert resp.status_code == 200
 

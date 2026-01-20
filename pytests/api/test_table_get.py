@@ -32,7 +32,9 @@ def test_get_non_existence_table(server):
 
 
 def test_get_table_after_delete(server):
-    data = {"name": "test_get_table_after_delete", "columns": []}
+    data = {"name": "test_get_table_after_delete", "columns": [
+        {"name": "col1", "type": "VARCHAR"},
+    ]}
     resp = requests.put(f"{BASE_URL}/table", json=data)
     assert resp.status_code == 200
     id = resp.json()
