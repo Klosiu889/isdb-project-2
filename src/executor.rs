@@ -1,5 +1,5 @@
 use log::{error, info};
-use std::{collections::HashMap, fs::File};
+use std::{cmp::Ordering, collections::HashMap, fs::File, rc::Rc};
 
 use csv::ReaderBuilder;
 
@@ -63,13 +63,350 @@ impl Executor {
 
     async fn select_all(
         &self,
-        _: &String,
+        query_id: &String,
         select_plan: &planner::SelectPlan,
-        _: &metastore::SharedMetastore,
+        metastore: &metastore::SharedMetastore,
     ) -> Result<Option<Vec<query::QueryResult>>, String> {
+        let (result_columns, current_row_count) = self.execude_plan(select_plan, metastore).await?;
+
+        let result_table_id = {
+            let mut metastore_guard = metastore.write().await;
+            metastore_guard.create_query_result_table(query_id, result_columns, current_row_count)
+        };
+
         Ok(Some(vec![query::QueryResult {
-            table_id: select_plan.table_id.clone(),
+            table_id: result_table_id,
         }]))
+    }
+
+    async fn execude_plan(
+        &self,
+        select_plan: &planner::SelectPlan,
+        metastore: &metastore::SharedMetastore,
+    ) -> Result<(Vec<lib::ColumnData>, usize), String> {
+        let (mut working_columns, mut current_row_count) = {
+            let metastore_guard = metastore.read().await;
+            let table = metastore_guard
+                .get_table_internal(&select_plan.table_id)
+                .ok_or(format!(
+                    "Table {} not found during execution",
+                    select_plan.table_id
+                ))?;
+
+            let mut working_columns_innter: HashMap<String, Rc<lib::ColumnData>> = HashMap::new();
+            for (col_name, &col_index) in &select_plan.column_indexes_map {
+                let col_data = &table.columns[col_index].data;
+                working_columns_innter.insert(col_name.clone(), Rc::new(col_data.clone()));
+            }
+            (working_columns_innter, table.get_num_rows() as usize)
+        };
+
+        let mut expressions_results = vec![None; select_plan.expressions_map.len()];
+
+        if let Some(filter_id) = select_plan.filter_expression {
+            let filter_result = self.evaluate_expression(
+                filter_id,
+                &select_plan.expressions_map,
+                &working_columns,
+                current_row_count,
+                &mut expressions_results,
+            )?;
+
+            let mask = match filter_result.as_ref() {
+                lib::ColumnData::INT64(vec) => vec.clone(),
+                _ => return Err("Where clause did not evaluate correctly".to_string()),
+            };
+
+            drop(filter_result);
+
+            expressions_results.fill(None);
+
+            for (_, data_rc) in working_columns.iter_mut() {
+                // Checking if strong references were properly dropped so no data is duplicated for
+                // no reason
+                debug_assert_eq!(Rc::strong_count(data_rc), 1, "Column cloned!");
+
+                let data_mut = Rc::make_mut(data_rc);
+                match data_mut {
+                    lib::ColumnData::STR(raw) => self.apply_mask(raw, &mask),
+                    lib::ColumnData::INT64(raw) => self.apply_mask(raw, &mask),
+                }
+            }
+            current_row_count = mask.iter().filter(|&&b| b == 1i64).count();
+        }
+
+        let evaluated_columns = select_plan
+            .column_expressions
+            .iter()
+            .map(|&expr_id| {
+                self.evaluate_expression(
+                    expr_id,
+                    &select_plan.expressions_map,
+                    &working_columns,
+                    current_row_count,
+                    &mut expressions_results,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut row_indices = (0..current_row_count).collect::<Vec<_>>();
+
+        if !select_plan.sorts.is_empty() {
+            row_indices.sort_by(|&a, &b| {
+                for sort in &select_plan.sorts {
+                    let col = &evaluated_columns[sort.column_index];
+                    let ordering = match col.as_ref() {
+                        lib::ColumnData::INT64(vec) => vec[a].cmp(&vec[b]),
+                        lib::ColumnData::STR(vec) => vec[a].cmp(&vec[b]),
+                    };
+
+                    if ordering != Ordering::Equal {
+                        return if sort.asscending {
+                            ordering
+                        } else {
+                            ordering.reverse()
+                        };
+                    }
+                }
+                Ordering::Equal
+            })
+        }
+
+        if let Some(limit) = select_plan.limit {
+            if limit < row_indices.len() {
+                row_indices.truncate(limit);
+                current_row_count = limit;
+            }
+        }
+
+        let result_columns = evaluated_columns
+            .into_iter()
+            .map(|col_rc| {
+                let materialized_data = match col_rc.as_ref() {
+                    lib::ColumnData::INT64(vec) => {
+                        let new_vec = row_indices.iter().map(|&idx| vec[idx]).collect();
+                        lib::ColumnData::INT64(new_vec)
+                    }
+                    lib::ColumnData::STR(vec) => {
+                        let new_vec = row_indices.iter().map(|&idx| vec[idx].clone()).collect();
+                        lib::ColumnData::STR(new_vec)
+                    }
+                };
+                drop(col_rc);
+
+                materialized_data
+            })
+            .collect::<Vec<_>>();
+
+        Ok((result_columns, current_row_count))
+    }
+
+    fn evaluate_expression(
+        &self,
+        expr_id: usize,
+        expressions_map: &Vec<planner::FlatExpression>,
+        working_columns: &HashMap<String, Rc<lib::ColumnData>>,
+        row_count: usize,
+        expressions_results: &mut Vec<Option<Rc<lib::ColumnData>>>,
+    ) -> Result<Rc<lib::ColumnData>, String> {
+        if let Some(res) = &expressions_results[expr_id] {
+            return Ok(res.clone());
+        }
+
+        let expr = &expressions_map[expr_id];
+
+        match expr {
+            planner::FlatExpression::Ref(col_name) => working_columns
+                .get(col_name)
+                .cloned()
+                .ok_or("Column name does not exist in execution plan".to_string()),
+            planner::FlatExpression::Literal(literal) => match literal {
+                query::Literal::I64(val) => {
+                    Ok(Rc::new(lib::ColumnData::INT64(vec![*val; row_count])))
+                }
+                query::Literal::String(val) => {
+                    Ok(Rc::new(lib::ColumnData::STR(vec![val.clone(); row_count])))
+                }
+                query::Literal::Bool(val) => Ok(Rc::new(lib::ColumnData::INT64(vec![
+                    *val as i64;
+                    row_count
+                ]))),
+            },
+            planner::FlatExpression::Function(function_name, arg_ids) => {
+                let args = arg_ids
+                    .iter()
+                    .map(|&id| {
+                        self.evaluate_expression(
+                            id,
+                            expressions_map,
+                            working_columns,
+                            row_count,
+                            expressions_results,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.evaluate_function(function_name, &args)
+            }
+            planner::FlatExpression::Binary(left_id, operator, right_id) => {
+                let left_result = self.evaluate_expression(
+                    *left_id,
+                    expressions_map,
+                    working_columns,
+                    row_count,
+                    expressions_results,
+                )?;
+                let rigt_result = self.evaluate_expression(
+                    *right_id,
+                    expressions_map,
+                    working_columns,
+                    row_count,
+                    expressions_results,
+                )?;
+                self.evaluate_binary_expression(operator, left_result, rigt_result)
+            }
+            planner::FlatExpression::Unary(operator, id) => {
+                let result = self.evaluate_expression(
+                    *id,
+                    expressions_map,
+                    working_columns,
+                    row_count,
+                    expressions_results,
+                )?;
+                self.evaluate_unary_expression(operator, result)
+            }
+        }
+    }
+
+    fn evaluate_function(
+        &self,
+        function_name: &query::FunctionName,
+        arguments_results: &Vec<Rc<lib::ColumnData>>,
+    ) -> Result<Rc<lib::ColumnData>, String> {
+        match (function_name, arguments_results.as_slice()) {
+            (query::FunctionName::Concat, [left_rc, right_rc]) => {
+                match (left_rc.as_ref(), right_rc.as_ref()) {
+                    (lib::ColumnData::STR(l_vec), lib::ColumnData::STR(r_vec)) => {
+                        let result_vec = l_vec
+                            .iter()
+                            .zip(r_vec.iter())
+                            .map(|(l, r)| l.clone() + r)
+                            .collect::<Vec<_>>();
+                        Ok(Rc::new(lib::ColumnData::STR(result_vec)))
+                    }
+                    _ => Err("Concat requires (String, String)".to_string()),
+                }
+            }
+            (query::FunctionName::Strlen, [arg_rc]) => match arg_rc.as_ref() {
+                lib::ColumnData::STR(vec) => {
+                    let result_vec = vec.iter().map(|v| v.len() as i64).collect();
+                    Ok(Rc::new(lib::ColumnData::INT64(result_vec)))
+                }
+                _ => Err("Strln requires (String)".to_string()),
+            },
+            (query::FunctionName::Upper, [arg_rc]) => match arg_rc.as_ref() {
+                lib::ColumnData::STR(vec) => {
+                    let result_vec = vec.iter().map(|v| v.to_uppercase()).collect();
+                    Ok(Rc::new(lib::ColumnData::STR(result_vec)))
+                }
+                _ => Err("Upper requires (String)".to_string()),
+            },
+            (query::FunctionName::Lower, [arg_rc]) => match arg_rc.as_ref() {
+                lib::ColumnData::STR(vec) => {
+                    let result_vec = vec.iter().map(|v| v.to_lowercase()).collect();
+                    Ok(Rc::new(lib::ColumnData::STR(result_vec)))
+                }
+
+                _ => Err("Lower requires (String)".to_string()),
+            },
+            _ => Err("Wrong number of arguments".to_string()),
+        }
+    }
+
+    fn evaluate_binary_expression(
+        &self,
+        operator: &query::BinOperator,
+        left_res: Rc<lib::ColumnData>,
+        right_res: Rc<lib::ColumnData>,
+    ) -> Result<Rc<lib::ColumnData>, String> {
+        match (left_res.as_ref(), right_res.as_ref()) {
+            (lib::ColumnData::INT64(l_vec), lib::ColumnData::INT64(r_vec)) => {
+                let result_vec = l_vec
+                    .iter()
+                    .zip(r_vec.iter())
+                    .map(|(l, r)| match operator {
+                        query::BinOperator::Add => Ok(*l + *r),
+                        query::BinOperator::Subtract => Ok(*l - *r),
+                        query::BinOperator::Multiply => Ok(*l * *r),
+                        query::BinOperator::Divide => {
+                            if *r == 0 {
+                                Err("Division by 0")
+                            } else {
+                                Ok(*l / *r)
+                            }
+                        }
+                        query::BinOperator::And => Ok(*l & *r),
+                        query::BinOperator::Or => Ok(*l | *r),
+                        query::BinOperator::Equal => Ok((l == r) as i64),
+                        query::BinOperator::NotEqual => Ok((l != r) as i64),
+                        query::BinOperator::LessThan => Ok((l < r) as i64),
+                        query::BinOperator::LessEqual => Ok((l <= r) as i64),
+                        query::BinOperator::GreaterThan => Ok((l > r) as i64),
+                        query::BinOperator::GreaterEqual => Ok((l >= r) as i64),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Rc::new(lib::ColumnData::INT64(result_vec)))
+            }
+            (lib::ColumnData::STR(l_vec), lib::ColumnData::STR(r_vec)) => {
+                let result_vec = l_vec
+                    .iter()
+                    .zip(r_vec.iter())
+                    .map(|(l, r)| match operator {
+                        query::BinOperator::Equal => Ok((l == r) as i64),
+                        query::BinOperator::NotEqual => Ok((l != r) as i64),
+                        query::BinOperator::LessThan => Ok((l < r) as i64),
+                        query::BinOperator::LessEqual => Ok((l <= r) as i64),
+                        query::BinOperator::GreaterThan => Ok((l > r) as i64),
+                        query::BinOperator::GreaterEqual => Ok((l >= r) as i64),
+                        _ => Err("Forbidden operation on strings"),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Rc::new(lib::ColumnData::INT64(result_vec)))
+            }
+            _ => Err("Missmatched operation types".to_string()),
+        }
+    }
+
+    fn evaluate_unary_expression(
+        &self,
+        operator: &query::Operator,
+        res: Rc<lib::ColumnData>,
+    ) -> Result<Rc<lib::ColumnData>, String> {
+        match res.as_ref() {
+            lib::ColumnData::INT64(vec) => {
+                let result_vec = vec
+                    .iter()
+                    .map(|v| match operator {
+                        query::Operator::Not => !v,
+                        query::Operator::Minus => -v,
+                    })
+                    .collect();
+                Ok(Rc::new(lib::ColumnData::INT64(result_vec)))
+            }
+            _ => Err("Mismatched operation type".to_string()),
+        }
+    }
+
+    fn apply_mask<T>(&self, data: &mut Vec<T>, mask: &[i64]) {
+        let mut keep_idx = 0;
+        for read_idx in 0..data.len() {
+            if mask[read_idx] == 1 {
+                if read_idx != keep_idx {
+                    data.swap(read_idx, keep_idx);
+                }
+                keep_idx += 1;
+            }
+        }
+        data.truncate(keep_idx);
     }
 
     async fn copy_from_csv(

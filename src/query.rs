@@ -149,6 +149,7 @@ impl BinOperator {
             _ => ExpressionType::Bool,
         }
     }
+
     pub fn get_args_types(&self) -> Option<(ExpressionType, ExpressionType)> {
         match self {
             Self::Add | Self::Subtract | Self::Multiply | Self::Divide => {
@@ -156,6 +157,15 @@ impl BinOperator {
             }
             Self::And | Self::Or => Some((ExpressionType::Bool, ExpressionType::Bool)),
             _ => None,
+        }
+    }
+
+    pub fn is_commutative(&self) -> bool {
+        match self {
+            Self::Add | Self::Multiply | Self::And | Self::Or | Self::Equal | Self::NotEqual => {
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -379,12 +389,10 @@ impl TryFrom<models::ColumnExpression> for ColumnExpression {
     fn try_from(value: models::ColumnExpression) -> Result<Self, Self::Error> {
         match value.into() {
             OneOf5::A(reference) => Ok(ColumnExpression::Ref(ColumnReferenceExpression {
-                table_name: reference.table_name.ok_or("Missing table name")?,
-                column_name: reference.column_name.ok_or("Missing column name")?,
+                table_name: reference.table_name,
+                column_name: reference.column_name,
             })),
-            OneOf5::B(literal) => Ok(ColumnExpression::Literal(
-                literal.value.ok_or("Missing literal value")?.into(),
-            )),
+            OneOf5::B(literal) => Ok(ColumnExpression::Literal(literal.value.into())),
             OneOf5::C(function) => Ok(ColumnExpression::Function(Function {
                 name: function
                     .function_name
@@ -418,11 +426,11 @@ impl From<ColumnExpression> for models::ColumnExpression {
     fn from(value: ColumnExpression) -> Self {
         let one_of_value = match value {
             ColumnExpression::Ref(reference) => OneOf5::A(models::ColumnReferenceExpression {
-                table_name: Some(reference.table_name),
-                column_name: Some(reference.column_name),
+                table_name: reference.table_name,
+                column_name: reference.column_name,
             }),
             ColumnExpression::Literal(literal) => OneOf5::B(models::Literal {
-                value: Some(literal.into()),
+                value: literal.into(),
             }),
             ColumnExpression::Function(function) => OneOf5::C(models::Function {
                 function_name: Some(function.name.into()),

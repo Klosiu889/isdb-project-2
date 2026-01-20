@@ -515,6 +515,35 @@ impl Metastore {
             .get_mut(table_id)
             .map(|metadata| &mut metadata.table)
     }
+
+    pub fn create_query_result_table(
+        &mut self,
+        query_id: &String,
+        columns_data: Vec<lib::ColumnData>,
+        num_rows: usize,
+    ) -> String {
+        let table_id = Uuid::new_v4().to_string();
+        let columns = columns_data
+            .into_iter()
+            .map(|data| lib::Column {
+                name: Uuid::new_v4().to_string(),
+                data,
+            })
+            .collect();
+        let table = lib::Table::new(num_rows as u64, columns);
+        let table_metadata = TableMetaData {
+            name: table_id.clone(),
+            table: table,
+            table_file: convert_to_table_file_table(&table_id),
+        };
+        self.tables.insert(table_id.clone(), table_metadata);
+        self.table_accesses
+            .entry(table_id.clone())
+            .or_default()
+            .insert(query_id.clone());
+
+        table_id
+    }
 }
 
 pub type SharedMetastore = Arc<RwLock<Metastore>>;

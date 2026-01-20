@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    mem::swap,
+};
 
 use log::error;
 use serde::{Deserialize, Serialize};
@@ -21,7 +24,7 @@ pub struct SelectPlan {
     pub column_expressions: Vec<usize>,
     pub filter_expression: Option<usize>,
     pub sorts: Vec<query::OrderByExpression>,
-    pub limit: Option<i32>,
+    pub limit: Option<usize>,
 }
 
 pub struct CopyFromCsvPlan {
@@ -162,7 +165,7 @@ impl Planner {
             column_expressions: column_expressions,
             filter_expression: filter_expression,
             sorts: select.order_by_clause,
-            limit: select.limit,
+            limit: select.limit.map(|limit| limit as usize),
         }))
     }
 
@@ -186,9 +189,17 @@ impl Planner {
                 FlatExpression::Function(function.name.clone(), arg_ids)
             }
             query::ColumnExpression::Binary(binary) => {
-                let left_id = self.flatten_expression(&binary.left_operand, flat_expressions, seen);
-                let right_id =
+                let mut left_id =
+                    self.flatten_expression(&binary.left_operand, flat_expressions, seen);
+                let mut right_id =
                     self.flatten_expression(&binary.right_operand, flat_expressions, seen);
+
+                // Canonizing binary expressions so they will hash to the same value no matter the
+                // order
+                if binary.operator.is_commutative() && left_id < right_id {
+                    swap(&mut left_id, &mut right_id);
+                }
+
                 FlatExpression::Binary(left_id, binary.operator.clone(), right_id)
             }
             query::ColumnExpression::Unary(unary) => {
