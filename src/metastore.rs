@@ -11,7 +11,7 @@ use uuid::Uuid;
 use lib;
 use openapi_client::models;
 use serde::{Deserialize, Serialize};
-use swagger::{OneOf2, OneOf3};
+use swagger::{OneOf2, OneOf3, OneOf5};
 use tokio::sync::RwLock;
 
 use crate::{query, utils::convert_to_table_file_table};
@@ -275,12 +275,48 @@ impl Metastore {
     ) -> Result<String, MetastoreError> {
         let mut errors = Vec::new();
         let mut parsed_column_clauses = Vec::<query::ColumnExpression>::new();
+        let mut expanded_clauses = Vec::<models::ColumnExpression>::new();
+
         for clause in &query.column_clauses {
-            match clause.clone().try_into() {
+            let star_target_table = match clause.clone().into() {
+                OneOf5::A(models::ColumnReferenceExpression {
+                    table_name,
+                    column_name: None,
+                }) => Some(table_name),
+                _ => None,
+            };
+
+            if let Some(table_name) = star_target_table {
+                let table_id = self.tables_name_id.get(&table_name).ok_or(
+                    MetastoreError::QueryCreationError(vec![Error::with_context(
+                        "There is no table with that name",
+                        table_name.clone(),
+                    )]),
+                )?;
+                let table_metadata = self
+                    .tables
+                    .get(table_id)
+                    .expect("Integrity error: Table ID exists but table missing");
+                for col in &table_metadata.table.columns {
+                    let specific_col_ref = models::ColumnExpression::from(OneOf5::A(
+                        models::ColumnReferenceExpression {
+                            table_name: table_name.clone(),
+                            column_name: Some(col.name.clone()),
+                        },
+                    ));
+                    expanded_clauses.push(specific_col_ref);
+                }
+            } else {
+                expanded_clauses.push(clause.clone());
+            }
+        }
+        for clause in expanded_clauses {
+            match clause.try_into() {
                 Ok(expr) => parsed_column_clauses.push(expr),
                 Err(e) => errors.push(Error::new(e.as_str())),
             }
         }
+
         let parsed_where_clause: Option<query::ColumnExpression> =
             if let Some(clause) = &query.where_clause {
                 match clause.clone().try_into() {
@@ -293,6 +329,7 @@ impl Metastore {
             } else {
                 None
             };
+
         let mut parsed_order_by_clauses = Vec::<query::OrderByExpression>::new();
         for clause in query.order_by_clause.as_deref().unwrap_or_default() {
             match clause.clone().try_into() {
