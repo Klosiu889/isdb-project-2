@@ -1,4 +1,4 @@
-openapi: '3.0.3'
+openapi: "3.0.3"
 info:
   title: MIMUW ISBD database system
   description: |-
@@ -19,7 +19,6 @@ tags:
     description: Endpoints from extensions (not required)
 
 paths:
-
   /tables:
     get:
       summary: Get list of tables with their accompanying IDs. Use those IDs to get details by calling /table endpoint.
@@ -181,7 +180,6 @@ paths:
           $ref: "#/components/responses/SystemInfoResponse"
 
 components:
-
   parameters:
     TableID:
       name: tableId
@@ -200,7 +198,6 @@ components:
         $ref: "#/components/schemas/QueryID"
 
   schemas:
-
     TableID:
       description: ID of selected Table (I propose UUID, but it is under your own discretion)
       type: string
@@ -301,8 +298,7 @@ components:
             - $ref: "#/components/schemas/CopyQuery"
 
     CopyQuery:
-      description:
-        Description of the COPY query from CSV file.
+      description: Description of the COPY query from CSV file.
         Server will read the file and insert all data into selected table.
         When number of columns in source and target doesn't match, user have to use "destinationColumns" property to specify which columns data should be inserted into.
       required:
@@ -315,8 +311,7 @@ components:
         destinationTableName:
           type: string
         destinationColumns:
-          description:
-            List of columns to copy data into.
+          description: List of columns to copy data into.
             It creates a map from source columns to destination columns.
             Assumes that data in source file is in the same order as in this list.
           type: array
@@ -353,7 +348,7 @@ components:
         - $ref: "#/components/schemas/Function"
         - $ref: "#/components/schemas/ColumnarBinaryOperation"
         - $ref: "#/components/schemas/ColumnarUnaryOperation"
-    
+
     WhereExpression:
       description: Description of WHERE clause in SELECT query (just single column expression which should evaluate to boolean type)
       $ref: "#/components/schemas/ColumnExpression"
@@ -367,6 +362,8 @@ components:
 
     OrderByExpression:
       description: Description of ORDER BY clause in SELECT query
+      required:
+        - columnIndex
       properties:
         columnIndex:
           description: Index of the column from the columnClauses (0-based). We can Assume that ordering is done only on data that are results of the query.
@@ -376,6 +373,9 @@ components:
 
     ColumnReferenceExpression:
       description: Description of a reference to a column used in column expression
+      required:
+        - tableName
+        - columnName
       properties:
         tableName:
           type: string
@@ -384,16 +384,20 @@ components:
 
     Literal:
       description: Description of a literal value used in column expression
+      required:
+        - value
       properties:
         value:
-            oneOf:
-              - type: integer
-                format: int64
-              - type: string
-              - type: boolean
+          oneOf:
+            - type: integer
+              format: int64
+            - type: string
+            - type: boolean
 
     Function:
       description: Description of a function used in column expression
+      required:
+        - functionName
       properties:
         functionName:
           enum:
@@ -408,6 +412,10 @@ components:
 
     ColumnarBinaryOperation:
       description: Description of columnar operator used in column expression
+      required:
+        - operator
+        - leftOperand
+        - rightOperand
       properties:
         operator:
           enum:
@@ -430,6 +438,9 @@ components:
 
     ColumnarUnaryOperation:
       description: Description of unary Operation
+      required:
+        - operand
+        - operator
       properties:
         operand:
           $ref: "#/components/schemas/ColumnExpression"
@@ -450,7 +461,7 @@ components:
       type: array
       items:
         type: string
-    
+
     BooleanColumn:
       description: Column containing BOOLEAN values
       type: array
@@ -524,7 +535,6 @@ components:
           format: int64
 
   requestBodies:
-
     CreateTableRequest:
       description: Used to create a new table
       required: true
@@ -557,7 +567,6 @@ components:
                 type: boolean
 
   responses:
-
     GetTablesResponse:
       description: Array of tables in database
       content:

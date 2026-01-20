@@ -394,10 +394,7 @@ impl TryFrom<models::ColumnExpression> for ColumnExpression {
             })),
             OneOf5::B(literal) => Ok(ColumnExpression::Literal(literal.value.into())),
             OneOf5::C(function) => Ok(ColumnExpression::Function(Function {
-                name: function
-                    .function_name
-                    .ok_or("Missing function name")?
-                    .into(),
+                name: function.function_name.into(),
                 arguments: function
                     .arguments
                     .unwrap_or_default()
@@ -406,17 +403,13 @@ impl TryFrom<models::ColumnExpression> for ColumnExpression {
                     .collect::<Result<Vec<_>, _>>()?,
             })),
             OneOf5::D(binary) => Ok(ColumnExpression::Binary(ColumnarBinaryOperation {
-                operator: binary.operator.ok_or("Missing operator")?.into(),
-                left_operand: Box::new(
-                    (*binary.left_operand.ok_or("Missing left operand")?).try_into()?,
-                ),
-                right_operand: Box::new(
-                    (*binary.right_operand.ok_or("Missing right operand")?).try_into()?,
-                ),
+                operator: binary.operator.into(),
+                left_operand: Box::new((*binary.left_operand).try_into()?),
+                right_operand: Box::new((*binary.right_operand).try_into()?),
             })),
             OneOf5::E(unary) => Ok(ColumnExpression::Unary(ColumnarUnaryOperation {
-                operator: unary.operator.ok_or("Missing operator")?.into(),
-                operand: Box::new((*unary.operand.ok_or("Missing operand")?).try_into()?),
+                operator: unary.operator.into(),
+                operand: Box::new((*unary.operand).try_into()?),
             })),
         }
     }
@@ -433,7 +426,7 @@ impl From<ColumnExpression> for models::ColumnExpression {
                 value: literal.into(),
             }),
             ColumnExpression::Function(function) => OneOf5::C(models::Function {
-                function_name: Some(function.name.into()),
+                function_name: function.name.into(),
                 arguments: if function.arguments.len() == 0 {
                     None
                 } else {
@@ -441,13 +434,13 @@ impl From<ColumnExpression> for models::ColumnExpression {
                 },
             }),
             ColumnExpression::Binary(binary) => OneOf5::D(models::ColumnarBinaryOperation {
-                operator: Some(binary.operator.into()),
-                left_operand: Some(Box::new((*binary.left_operand).into())),
-                right_operand: Some(Box::new((*binary.right_operand).into())),
+                operator: binary.operator.into(),
+                left_operand: Box::new((*binary.left_operand).into()),
+                right_operand: Box::new((*binary.right_operand).into()),
             }),
             ColumnExpression::Unary(unary) => OneOf5::E(models::ColumnarUnaryOperation {
-                operator: Some(unary.operator.into()),
-                operand: Some(Box::new((*unary.operand).into())),
+                operator: unary.operator.into(),
+                operand: Box::new((*unary.operand).into()),
             }),
         };
 
@@ -466,7 +459,7 @@ impl TryFrom<models::OrderByExpression> for OrderByExpression {
 
     fn try_from(value: models::OrderByExpression) -> Result<Self, Self::Error> {
         Ok(Self {
-            column_index: value.column_index.ok_or("Missing column index")? as usize,
+            column_index: value.column_index as usize,
             asscending: value.ascending.unwrap_or(false),
         })
     }
@@ -475,7 +468,7 @@ impl TryFrom<models::OrderByExpression> for OrderByExpression {
 impl From<OrderByExpression> for models::OrderByExpression {
     fn from(value: OrderByExpression) -> Self {
         Self {
-            column_index: Some(value.column_index as i32),
+            column_index: value.column_index as i32,
             ascending: Some(value.asscending),
         }
     }

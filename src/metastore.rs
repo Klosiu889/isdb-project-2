@@ -223,7 +223,7 @@ impl Metastore {
                                     .order_by_clause
                                     .iter()
                                     .map(|clause| models::OrderByExpression {
-                                        column_index: Some(clause.column_index as i32),
+                                        column_index: clause.column_index as i32,
                                         ascending: Some(clause.asscending),
                                     })
                                     .collect(),
