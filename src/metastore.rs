@@ -515,11 +515,18 @@ impl Metastore {
                     OneOf3::C(raw.iter().take(row_count as usize).cloned().collect()),
                 ),
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        models::QueryResultInner {
-            row_count: Some(row_count),
-            columns: Some(columns),
+        if row_count == 0 {
+            models::QueryResultInner {
+                row_count: Some(row_count),
+                columns: None,
+            }
+        } else {
+            models::QueryResultInner {
+                row_count: Some(row_count),
+                columns: Some(columns),
+            }
         }
     }
 

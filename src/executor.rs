@@ -689,30 +689,35 @@ impl Executor {
                 .ok_or_else(|| format!("Table {} deleted during copy", copy_plan.table_id))?;
 
             for col in &mut table.columns {
-                let new_data = shadow_columns
-                    .remove(&col.name)
-                    .unwrap_or_else(|| match col.data {
-                        lib::ColumnData::INT64(_) => {
-                            let mut vec = Vec::new();
-                            vec.resize(num_rows as usize, 0i64);
-                            lib::ColumnData::INT64(vec)
-                        }
-                        lib::ColumnData::STR(_) => {
-                            let mut vec = Vec::new();
-                            vec.resize(num_rows as usize, "".to_string());
-                            lib::ColumnData::STR(vec)
-                        }
-                        lib::ColumnData::BOOL(_) => {
-                            let mut vec = Vec::new();
-                            vec.resize(num_rows as usize, false);
-                            lib::ColumnData::BOOL(vec)
-                        }
-                    });
+                let mut new_data = shadow_columns.remove(&col.name).unwrap_or(match col.data {
+                    lib::ColumnData::INT64(_) => {
+                        lib::ColumnData::INT64(vec![0i64; num_rows as usize])
+                    }
+                    lib::ColumnData::STR(_) => {
+                        lib::ColumnData::STR(vec!["".to_string(); num_rows as usize])
+                    }
+                    lib::ColumnData::BOOL(_) => {
+                        lib::ColumnData::BOOL(vec![false; num_rows as usize])
+                    }
+                });
 
-                col.data = new_data;
+                match (&mut col.data, &mut new_data) {
+                    (lib::ColumnData::INT64(existing_vec), lib::ColumnData::INT64(new_vec)) => {
+                        existing_vec.append(new_vec);
+                    }
+
+                    (lib::ColumnData::STR(existing_vec), lib::ColumnData::STR(new_vec)) => {
+                        existing_vec.append(new_vec);
+                    }
+
+                    (lib::ColumnData::BOOL(existing_vec), lib::ColumnData::BOOL(new_vec)) => {
+                        existing_vec.append(new_vec);
+                    }
+                    _ => return Err("Columns types mismatched".to_string()),
+                }
             }
 
-            table.num_rows = num_rows;
+            table.num_rows += num_rows;
         }
 
         Ok(None)
