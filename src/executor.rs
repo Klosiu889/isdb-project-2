@@ -499,7 +499,7 @@ impl Executor {
 
     async fn copy_from_csv(
         &self,
-        query_id: &String,
+        _: &String,
         copy_plan: &planner::CopyFromCsvPlan,
         metastore: &metastore::SharedMetastore,
     ) -> Result<Option<Vec<query::QueryResult>>, String> {
@@ -635,16 +635,21 @@ impl Executor {
 
         {
             let mut metastore_guard = metastore.write().await;
-            let active_readers: Vec<String> =
-                if let Some(readers) = metastore_guard.table_accesses.get(&copy_plan.table_id) {
-                    readers
-                        .iter()
-                        .filter(|&id| *id != *query_id)
-                        .cloned()
-                        .collect()
-                } else {
-                    Vec::new()
-                };
+            let all_active_readers = metastore_guard
+                .table_accesses
+                .entry(copy_plan.table_id.clone())
+                .or_default()
+                .clone();
+            let active_readers = all_active_readers
+                .into_iter()
+                .filter(|id| {
+                    let query = metastore_guard.queries.get(id).unwrap();
+                    match query.definition {
+                        query::QueryDefinition::Copy(_) => false,
+                        _ => true,
+                    }
+                })
+                .collect::<Vec<_>>();
 
             if !active_readers.is_empty() {
                 info!(
