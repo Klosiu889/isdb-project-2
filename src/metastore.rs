@@ -604,6 +604,10 @@ impl Metastore {
 
         table_id
     }
+
+    pub fn schedule_for_deletion_internal(&mut self, table_id: String) {
+        self.scheduled_for_deletion.insert(table_id);
+    }
 }
 
 pub type SharedMetastore = Arc<RwLock<Metastore>>;

@@ -85,7 +85,13 @@ impl Executor {
 
         let result_table_id = {
             let mut metastore_guard = metastore.write().await;
-            metastore_guard.create_query_result_table(query_id, result_columns, current_row_count)
+            let table_id = metastore_guard.create_query_result_table(
+                query_id,
+                result_columns,
+                current_row_count,
+            );
+            metastore_guard.schedule_for_deletion_internal(table_id.clone());
+            table_id
         };
 
         Ok(Some(vec![query::QueryResult {
