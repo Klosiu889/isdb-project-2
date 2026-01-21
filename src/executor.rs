@@ -90,7 +90,14 @@ impl Executor {
                 result_columns,
                 current_row_count,
             );
-            metastore_guard.schedule_for_deletion_internal(table_id.clone());
+            metastore_guard
+                .scheduled_for_deletion
+                .insert(table_id.clone());
+            if let Some(id) = &select_plan.table_id {
+                if let Some(access_set) = metastore_guard.table_accesses.get_mut(id) {
+                    access_set.remove(query_id);
+                }
+            }
             table_id
         };
 
@@ -630,7 +637,7 @@ impl Executor {
 
                 let current_table = metastore_guard
                     .get_table_internal(&copy_plan.table_id)
-                    .ok_or_else(|| format!("Table {} not found", copy_plan.table_id))?;
+                    .ok_or(format!("Table {} not found", copy_plan.table_id))?;
 
                 let snapshot_id = uuid::Uuid::new_v4().to_string();
                 let snapshot_metadata = metastore::TableMetaData {
@@ -771,6 +778,16 @@ impl Executor {
                 message: error_msg.clone(),
                 context: None,
             }]);
+            let maybe_table_id = match &q.definition {
+                query::QueryDefinition::SelectAll(select_all) => Some(select_all.table_id.clone()),
+                query::QueryDefinition::Select(select) => select.table_id.clone(),
+                query::QueryDefinition::Copy(copy) => Some(copy.table_id.clone()),
+            };
+            if let Some(id) = maybe_table_id {
+                if let Some(access_set) = metastore_guard.table_accesses.get_mut(&id) {
+                    access_set.remove(query_id);
+                }
+            }
             error!("Query {} failed: {}", query_id, error_msg);
         }
     }

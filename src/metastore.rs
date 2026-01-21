@@ -2,7 +2,7 @@ use log::warn;
 use std::{
     cmp::min,
     collections::{HashMap, HashSet},
-    fs::{self, remove_file},
+    fs,
     path::Path,
     sync::Arc,
 };
@@ -119,21 +119,23 @@ impl Metastore {
         }
     }
 
-    pub fn delete_table(&mut self, id: &String) -> Result<(), MetastoreError> {
-        if self.scheduled_for_deletion.contains(id) {
+    pub fn delete_table(&mut self, table_id: &String) -> Result<(), MetastoreError> {
+        if self.scheduled_for_deletion.contains(table_id) {
             return Err(MetastoreError::TableDeletionError(Error::new(
                 "Couldn't find a table of given ID",
             )));
         }
 
-        if self.tables.contains_key(id) {
-            self.scheduled_for_deletion.insert(id.clone());
-            return Ok(());
+        if !self.tables.contains_key(table_id) {
+            return Err(MetastoreError::TableDeletionError(Error::new(
+                "Couldn't find a table of given ID",
+            )));
         }
 
-        Err(MetastoreError::TableDeletionError(Error::new(
-            "Couldn't find a table of given ID",
-        )))
+        self.scheduled_for_deletion.insert(table_id.clone());
+        self.flush_table_reference(table_id, None);
+
+        return Ok(());
     }
 
     pub fn create_table(
@@ -469,7 +471,7 @@ impl Metastore {
             .collect();
 
         for table_id in result_table_ids {
-            self.flush_table_reference(&table_id, query_id);
+            self.flush_table_reference(&table_id, Some(query_id));
         }
 
         Ok(api_results)
@@ -530,19 +532,22 @@ impl Metastore {
         }
     }
 
-    pub fn flush_table_reference(&mut self, table_id: &String, query_id: &String) {
-        if let Some(access_set) = self.table_accesses.get_mut(table_id) {
-            access_set.remove(query_id);
+    pub fn flush_table_reference(&mut self, table_id: &String, query_id: Option<&String>) {
+        let access_set = self.table_accesses.entry(table_id.clone()).or_default();
+        if let Some(qid) = query_id {
+            access_set.remove(qid);
+        }
 
-            if access_set.is_empty() && self.scheduled_for_deletion.contains(table_id) {
-                if let Some(metadata) = self.tables.remove(table_id) {
-                    if let Err(e) = remove_file(&metadata.table_file) {
-                        warn!("Failed to delete table file {}: {}", metadata.table_file, e);
-                    }
+        if access_set.is_empty() && self.scheduled_for_deletion.contains(table_id) {
+            if let Some(metadata) = self.tables.remove(table_id) {
+                self.tables_name_id.remove(&metadata.name);
+                if let Err(e) = fs::remove_file(&metadata.table_file) {
+                    warn!("Failed to delete table file {}: {}", metadata.table_file, e);
                 }
-
-                self.table_accesses.remove(table_id);
             }
+
+            self.table_accesses.remove(table_id);
+            self.scheduled_for_deletion.remove(table_id);
         }
     }
 
@@ -603,10 +608,6 @@ impl Metastore {
             .insert(query_id.clone());
 
         table_id
-    }
-
-    pub fn schedule_for_deletion_internal(&mut self, table_id: String) {
-        self.scheduled_for_deletion.insert(table_id);
     }
 }
 
