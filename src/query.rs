@@ -50,6 +50,7 @@ pub enum FunctionName {
     Concat,
     Upper,
     Lower,
+    Replace,
 }
 
 impl From<models::FunctionFunctionName> for FunctionName {
@@ -59,6 +60,7 @@ impl From<models::FunctionFunctionName> for FunctionName {
             models::FunctionFunctionName::Concat => Self::Concat,
             models::FunctionFunctionName::Upper => Self::Upper,
             models::FunctionFunctionName::Lower => Self::Lower,
+            models::FunctionFunctionName::Replace => Self::Replace,
         }
     }
 }
@@ -68,19 +70,21 @@ impl FunctionName {
         match self {
             Self::Strlen | Self::Upper | Self::Lower => 1,
             Self::Concat => 2,
+            Self::Replace => 3,
         }
     }
 
     pub fn arguments_types(&self) -> Vec<ExpressionType> {
         match self {
             Self::Strlen | Self::Upper | Self::Lower => vec![ExpressionType::String],
-            Self::Concat => vec![ExpressionType::String, ExpressionType::String],
+            Self::Concat => vec![ExpressionType::String; 2],
+            Self::Replace => vec![ExpressionType::String; 3],
         }
     }
 
     pub fn get_type(&self) -> ExpressionType {
         match self {
-            Self::Upper | Self::Lower | Self::Concat => ExpressionType::String,
+            Self::Upper | Self::Lower | Self::Concat | Self::Replace => ExpressionType::String,
             Self::Strlen => ExpressionType::I64,
         }
     }
@@ -93,6 +97,7 @@ impl From<FunctionName> for models::FunctionFunctionName {
             FunctionName::Concat => Self::Concat,
             FunctionName::Upper => Self::Upper,
             FunctionName::Lower => Self::Lower,
+            FunctionName::Replace => Self::Replace,
         }
     }
 }
@@ -104,6 +109,7 @@ impl Display for FunctionName {
             Self::Concat => write!(f, "CONCAT"),
             Self::Upper => write!(f, "UPPER"),
             Self::Lower => write!(f, "LOWER"),
+            Self::Replace => write!(f, "REPLACE"),
         }
     }
 }

@@ -351,6 +351,24 @@ impl Executor {
 
                 _ => Err("Lower requires (String)".to_string()),
             },
+            (query::FunctionName::Replace, [rc1, rc2, rc3]) => {
+                match (rc1.as_ref(), rc2.as_ref(), rc3.as_ref()) {
+                    (
+                        lib::ColumnData::STR(vec1),
+                        lib::ColumnData::STR(vec2),
+                        lib::ColumnData::STR(vec3),
+                    ) => {
+                        let result_vec = vec1
+                            .iter()
+                            .zip(vec2.iter())
+                            .zip(vec3.iter())
+                            .map(|((v1, v2), v3)| v1.replace(v2, v3))
+                            .collect();
+                        Ok(Rc::new(lib::ColumnData::STR(result_vec)))
+                    }
+                    _ => Err("Replace requires (String, String, String)".to_string()),
+                }
+            }
             _ => Err("Wrong number of arguments".to_string()),
         }
     }
