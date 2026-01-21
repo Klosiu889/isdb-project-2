@@ -413,6 +413,7 @@ components:
           enum:
             - STRLEN
             - CONCAT
+            - REPLACE
             - UPPER
             - LOWER
         arguments:
