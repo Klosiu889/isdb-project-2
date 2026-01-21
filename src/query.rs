@@ -1,13 +1,14 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
+    sync::Arc,
 };
 
 use log::info;
 use openapi_client::models;
 use serde::{Deserialize, Serialize};
 use swagger::{OneOf3, OneOf5};
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 
 use crate::{executor::Executor, metastore::SharedMetastore, planner::Planner};
 
@@ -558,26 +559,33 @@ impl Query {
 }
 
 pub struct QueryEngine {
-    planner: Planner,
-    executor: Executor,
+    planner: Arc<Planner>,
+    executor: Arc<Executor>,
     metastore: SharedMetastore,
+    semaphore: Arc<Semaphore>,
 }
 
 impl QueryEngine {
-    pub fn new(metastore: SharedMetastore) -> Self {
+    pub fn new(metastore: SharedMetastore, max_concurrent: usize) -> Self {
         Self {
-            planner: Planner::new(),
-            executor: Executor::new(),
+            planner: Arc::new(Planner::new()),
+            executor: Arc::new(Executor::new()),
             metastore,
+            semaphore: Arc::new(Semaphore::new(max_concurrent)),
         }
     }
 
-    pub async fn run(self, mut receiver: mpsc::Receiver<String>) {
+    pub async fn run(self: Arc<Self>, mut receiver: mpsc::Receiver<String>) {
         info!("Query Engine started and waiting for jobs...");
 
         while let Some(query_id) = receiver.recv().await {
-            info!("Engine received query: {}", query_id);
-            self.process_query(&query_id).await;
+            let engine = Arc::clone(&self);
+            let permit = engine.semaphore.clone().acquire_owned().await.unwrap();
+            tokio::spawn(async move {
+                info!("Processing query {}", query_id);
+                let _permit = permit;
+                engine.process_query(&query_id).await;
+            });
         }
 
         info!("Query Engine channel closed. Shutting down worker.");

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use crate::consts::{AUTHOR, INTERFACE_VERSION, SERVER_VERSION};
+use crate::consts::{AUTHOR, INTERFACE_VERSION, MAX_QUERY_WORKERS, SERVER_VERSION};
 use crate::metastore::{self, Metastore, MetastoreError, SharedMetastore};
 use crate::query::QueryEngine;
 use hyper::server::conn::http1;
@@ -35,7 +35,7 @@ pub async fn create(addr: &str, https: bool, metastore: SharedMetastore) {
 
     let (sender, receiver) = mpsc::channel(100);
 
-    let engine = QueryEngine::new(metastore.clone());
+    let engine = Arc::new(QueryEngine::new(metastore.clone(), MAX_QUERY_WORKERS));
 
     tokio::spawn(async move {
         engine.run(receiver).await;

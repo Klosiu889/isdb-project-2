@@ -1,3 +1,4 @@
+pub const MAX_QUERY_WORKERS: usize = 10;
 pub const METASTORE_FILE: &str = "metastore.json";
 
 pub const TABLES_DIR: &str = "tables";
