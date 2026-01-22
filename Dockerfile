@@ -1,4 +1,4 @@
-FROM rust:alpine3.22 as builder
+FROM rust:alpine3.22 AS builder
 
 RUN apk add --no-cache \
     bash \
@@ -29,7 +29,7 @@ RUN cargo build --release || true
 
 COPY . .
 
-RUN cargo build --release --bin proj2
+RUN cargo build --release --bin simple_rust_dbms
 
 FROM alpine:3.22
 
@@ -37,8 +37,8 @@ RUN apk add --no-cache libgcc
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/proj2 .
+COPY --from=builder /app/target/release/simple_rust_dbms .
 
 EXPOSE 8080
 
-ENTRYPOINT ["./proj2"]
+ENTRYPOINT ["./simple_rust_dbms"]

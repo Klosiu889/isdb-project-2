@@ -1199,30 +1199,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proj2"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "clap",
- "csv",
- "env_logger",
- "hyper",
- "hyper-util",
- "integer-encoding",
- "log",
- "lz4_flex",
- "openapi_client",
- "openssl",
- "rand",
- "serde",
- "serde_json",
- "swagger",
- "tokio",
- "tokio-openssl",
- "uuid",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1454,6 +1430,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7664a098b8e616bdfcc2dc0e9ac44eb231eedf41db4e9fe95d8d32ec728dedad"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "simple_rust_dbms"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "clap",
+ "csv",
+ "env_logger",
+ "hyper",
+ "hyper-util",
+ "integer-encoding",
+ "log",
+ "lz4_flex",
+ "openapi_client",
+ "openssl",
+ "rand",
+ "serde",
+ "serde_json",
+ "swagger",
+ "tokio",
+ "tokio-openssl",
+ "uuid",
 ]
 
 [[package]]

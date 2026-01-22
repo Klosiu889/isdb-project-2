@@ -1,5 +1,5 @@
 [package]
-name = "proj2"
+name = "simple_rust_dbms"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,7 +8,7 @@ name = "lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "proj2"
+name = "simple_rust_dbms"
 path = "src/main.rs"
 
 [dependencies]

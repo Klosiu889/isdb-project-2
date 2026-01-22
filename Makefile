@@ -1,6 +1,6 @@
-IMAGE_NAME ?= proj2
+IMAGE_NAME ?= simple-dbms
 IMAGE_TAG ?= latest
-CONTAINER_NAME ?= ISDB
+CONTAINER_NAME ?= simple_dbms
 PORT ?= 8080
 
 PWD := $(shell pwd)
